@@ -581,22 +581,37 @@ def testing_farm_get_results(params):
 
     body = _fetch_request(request_id)
 
-    result = body.get("result", {})
-    xunit = result.get("xunit", "")
+    state = body.get("state", "")
+
+    # Guard: results are only available for terminal states.
+    # Return early with a message — do NOT cache this response.
+    if state not in TERMINAL_STATES:
+        return {
+            "request_id": request_id,
+            "state": state,
+            "result": "pending",
+            "message": f"Results not available — request is {state}",
+        }
+
+    api_result = body.get("result") or {}
+    xunit = api_result.get("xunit", "") if isinstance(api_result, dict) else ""
+    result_summary = api_result.get("summary", "") if isinstance(api_result, dict) else ""
 
     summary = {
         "request_id": request_id,
-        "state": body.get("state", ""),
-        "overall": result.get("overall", "unknown") if isinstance(result, dict) else str(result),
+        "state": state,
+        "result": _extract_result(body),
     }
+
+    if result_summary:
+        summary["summary"] = result_summary
 
     if xunit:
         tests = _parse_xunit(xunit)
         summary["tests"] = tests
         summary["test_count"] = len(tests)
 
-    if body.get("state") == "complete":
-        cache_set(f"tf:results:{request_id}", summary, ttl=3600)
+    cache_set(f"tf:results:{request_id}", summary, ttl=3600)
 
     return summary
 

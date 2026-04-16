@@ -118,7 +118,8 @@ tools:
     access: read
     description: >
       Get test results summary (xunit) for a completed request.
-      Returns test names, results, and duration.
+      Returns test names, results, and duration. Returns a status
+      message if the request is not yet complete.
     params:
       request_id:
         type: string

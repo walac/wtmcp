@@ -450,12 +450,49 @@ class TestGetResults:
         }
         with _mock_cache_get(None), _mock_http(200, body), _mock_cache_set():
             result = handler.testing_farm_get_results({"request_id": REQ_ID})
-            assert result["overall"] == "passed"
+            assert result["result"] == "passed"
             assert result["test_count"] == 1
             assert result["tests"][0]["name"] == "t1"
 
+    def test_summary_included_when_present(self):
+        body = {
+            "state": "complete",
+            "result": {
+                "overall": "passed",
+                "summary": "3 of 3 tests passed",
+                "xunit": '<testsuite><testcase name="t1" classname="s" time="1.0"/></testsuite>',
+            },
+        }
+        with _mock_cache_get(None), _mock_http(200, body), _mock_cache_set():
+            result = handler.testing_farm_get_results({"request_id": REQ_ID})
+            assert result["summary"] == "3 of 3 tests passed"
+
+    def test_running_returns_message(self):
+        body = {"state": "running", "result": {}}
+        with _mock_cache_get(None), _mock_http(200, body):
+            result = handler.testing_farm_get_results({"request_id": REQ_ID})
+            assert result["state"] == "running"
+            assert result["result"] == "pending"
+            assert "not available" in result["message"].lower()
+            assert "tests" not in result
+
+    def test_queued_returns_message(self):
+        body = {"state": "queued", "result": {}}
+        with _mock_cache_get(None), _mock_http(200, body):
+            result = handler.testing_farm_get_results({"request_id": REQ_ID})
+            assert result["state"] == "queued"
+            assert "message" in result
+
+    def test_error_state_cached(self):
+        body = {"state": "error", "result": "error"}
+        with _mock_cache_get(None), _mock_http(200, body), _mock_cache_set() as mock_set:
+            result = handler.testing_farm_get_results({"request_id": REQ_ID})
+            assert result["state"] == "error"
+            cache_calls = [c for c in mock_set.call_args_list if c[0][0] == f"tf:results:{REQ_ID}"]
+            assert len(cache_calls) == 1
+
     def test_cache_hit(self):
-        cached = {"request_id": REQ_ID, "overall": "passed"}
+        cached = {"request_id": REQ_ID, "result": "passed"}
         with _mock_cache_get(cached):
             result = handler.testing_farm_get_results({"request_id": REQ_ID})
             assert result == cached
