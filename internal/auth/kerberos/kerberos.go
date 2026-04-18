@@ -169,10 +169,13 @@ func (s *SPNEGORoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 
 	// 401 received — check for Negotiate challenge
 	authHeader := resp.Header.Get("WWW-Authenticate")
+	log.Printf("kerberos: 401 received for %s, WWW-Authenticate: %q", hostname, authHeader)
 	if !strings.Contains(authHeader, "Negotiate") {
+		log.Printf("kerberos: no Negotiate challenge for %s", hostname)
 		return resp, nil
 	}
 
+	log.Printf("kerberos: Negotiate challenge found for %s, attempting reactive fallback", hostname)
 	// Reactive fallback: server wants challenge-response.
 	// Creates a fresh GSSAPI context (standard for HTTP SPNEGO).
 	_, _ = io.Copy(io.Discard, resp.Body)
