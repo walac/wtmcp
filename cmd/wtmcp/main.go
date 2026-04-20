@@ -225,6 +225,8 @@ func run() error {
 		return fmt.Errorf("audit logger: %w", err)
 	}
 
+	httpProxy.SetAuditor(auditor)
+
 	index := server.NewToolIndex(mgr, cfg.ReadOnly)
 	srv := server.New(Version, mgr, cfg, index, collector, auditor)
 

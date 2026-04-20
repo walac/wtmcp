@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LeGambiArt/wtmcp/internal/audit"
 	"github.com/LeGambiArt/wtmcp/internal/auth"
 	"github.com/LeGambiArt/wtmcp/internal/auth/kerberos"
 	"github.com/LeGambiArt/wtmcp/internal/protocol"
@@ -63,6 +64,7 @@ type Proxy struct {
 	client        *http.Client
 	privateClient *http.Client // for plugins with allow_private_ips
 	maxBodySize   int64
+	auditor       *audit.Logger
 }
 
 // New creates a Proxy with the given HTTP client and max response body size.
@@ -88,6 +90,25 @@ func New(client *http.Client, maxBodySize int64, timeout time.Duration) *Proxy {
 		},
 		maxBodySize: maxBodySize,
 	}
+}
+
+// SetAuditor configures the audit logger for HTTP request logging.
+func (p *Proxy) SetAuditor(auditor *audit.Logger) {
+	p.auditor = auditor
+}
+
+func (p *Proxy) auditHTTP(ctx context.Context, pluginName, method, rawURL string, status int, size int64) {
+	if p.auditor == nil {
+		return
+	}
+	parsed, _ := url.Parse(rawURL)
+	host := ""
+	path := ""
+	if parsed != nil {
+		host = parsed.Host
+		path = parsed.Path
+	}
+	p.auditor.HTTPRequest(ctx, pluginName, method, host, path, status, size)
 }
 
 // RegisterPlugin associates auth and HTTP config with a plugin name.
@@ -155,6 +176,7 @@ func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Mes
 		if ctx.Err() != nil {
 			code = "request_cancelled"
 		}
+		p.auditHTTP(ctx, pluginName, httpReq.Method, fullURL, 0, 0)
 		return protocol.Message{
 			ID:     req.ID,
 			Type:   protocol.TypeHTTPResponse,
@@ -168,10 +190,13 @@ func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Mes
 		}
 	}()
 
-	body, encoding, err := p.readBody(resp)
+	body, bodyEncoding, err := p.readBody(resp)
 	if err != nil {
+		p.auditHTTP(ctx, pluginName, httpReq.Method, fullURL, resp.StatusCode, 0)
 		return errResponse(req.ID, "response_too_large", err.Error())
 	}
+
+	p.auditHTTP(ctx, pluginName, httpReq.Method, fullURL, resp.StatusCode, int64(len(body)))
 
 	return protocol.Message{
 		ID:           req.ID,
@@ -179,7 +204,7 @@ func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Mes
 		Status:       resp.StatusCode,
 		Headers:      responseHeaders(resp),
 		Body:         body,
-		BodyEncoding: encoding,
+		BodyEncoding: bodyEncoding,
 		URL:          resp.Request.URL.String(),
 	}
 }
