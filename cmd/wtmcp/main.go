@@ -22,6 +22,7 @@ import (
 	"github.com/LeGambiArt/wtmcp/internal/config"
 	"github.com/LeGambiArt/wtmcp/internal/plugin"
 	"github.com/LeGambiArt/wtmcp/internal/proxy"
+	"github.com/LeGambiArt/wtmcp/internal/ratelimit"
 	"github.com/LeGambiArt/wtmcp/internal/secrets/vault"
 	"github.com/LeGambiArt/wtmcp/internal/server"
 	"github.com/LeGambiArt/wtmcp/internal/stats"
@@ -227,8 +228,19 @@ func run() error {
 
 	httpProxy.SetAuditor(auditor)
 
+	rlCfg := cfg.HTTP.RateLimit
+	pluginRL, err := ratelimit.New(rlCfg.Default, rlCfg.PerPlugin, rlCfg.Global)
+	if err != nil {
+		return fmt.Errorf("plugin rate limiter: %w", err)
+	}
+	domainRL, err := ratelimit.New(rlCfg.Default, rlCfg.PerDomain, rlCfg.Global)
+	if err != nil {
+		return fmt.Errorf("domain rate limiter: %w", err)
+	}
+	httpProxy.SetRateLimiter(domainRL)
+
 	index := server.NewToolIndex(mgr, cfg.ReadOnly)
-	srv := server.New(Version, mgr, cfg, index, collector, auditor)
+	srv := server.New(Version, mgr, cfg, index, collector, auditor, pluginRL)
 
 	// Phase 2 (background): start plugin processes. The MCP server
 	// accepts requests immediately; tools for still-loading plugins
@@ -245,7 +257,7 @@ func run() error {
 	}()
 
 	// Start control directory watcher for external reload triggers
-	controlWatcher := server.NewControlWatcher(wd, srv, mgr, cfg, index, collector, auditor)
+	controlWatcher := server.NewControlWatcher(wd, srv, mgr, cfg, index, collector, auditor, pluginRL)
 	if err := controlWatcher.Start(); err != nil {
 		log.Printf("control watcher disabled: %v", err)
 	}

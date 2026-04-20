@@ -23,6 +23,7 @@ import (
 	"github.com/LeGambiArt/wtmcp/internal/auth"
 	"github.com/LeGambiArt/wtmcp/internal/auth/kerberos"
 	"github.com/LeGambiArt/wtmcp/internal/protocol"
+	"github.com/LeGambiArt/wtmcp/internal/ratelimit"
 )
 
 // TLSConfig holds per-plugin TLS settings for custom CAs and mTLS.
@@ -65,6 +66,7 @@ type Proxy struct {
 	privateClient *http.Client // for plugins with allow_private_ips
 	maxBodySize   int64
 	auditor       *audit.Logger
+	rateLimiter   *ratelimit.Registry
 }
 
 // New creates a Proxy with the given HTTP client and max response body size.
@@ -95,6 +97,11 @@ func New(client *http.Client, maxBodySize int64, timeout time.Duration) *Proxy {
 // SetAuditor configures the audit logger for HTTP request logging.
 func (p *Proxy) SetAuditor(auditor *audit.Logger) {
 	p.auditor = auditor
+}
+
+// SetRateLimiter configures per-domain rate limiting.
+func (p *Proxy) SetRateLimiter(rl *ratelimit.Registry) {
+	p.rateLimiter = rl
 }
 
 func (p *Proxy) auditHTTP(ctx context.Context, pluginName, method, rawURL string, status int, size int64) {
@@ -151,6 +158,17 @@ func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Mes
 	fullURL, err := p.resolveURL(pluginName, pa, req)
 	if err != nil {
 		return errResponse(req.ID, "invalid_url", err.Error())
+	}
+
+	if p.rateLimiter != nil {
+		parsed, _ := url.Parse(fullURL)
+		if parsed != nil {
+			domain := parsed.Hostname()
+			if d := p.rateLimiter.Allow(domain); d > 0 {
+				return errResponse(req.ID, "rate_limited",
+					fmt.Sprintf("domain %s rate limited — retry after %s", domain, d.Truncate(time.Millisecond)))
+			}
+		}
 	}
 
 	httpReq, err := p.buildRequest(ctx, fullURL, req)

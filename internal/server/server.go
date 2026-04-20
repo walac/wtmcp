@@ -20,6 +20,7 @@ import (
 	"github.com/LeGambiArt/wtmcp/internal/plugin"
 	"github.com/LeGambiArt/wtmcp/internal/pluginctx"
 	"github.com/LeGambiArt/wtmcp/internal/protocol"
+	"github.com/LeGambiArt/wtmcp/internal/ratelimit"
 	"github.com/LeGambiArt/wtmcp/internal/stats"
 )
 
@@ -30,7 +31,7 @@ import (
 // When cfg.ReadOnly is true, only read-access tools are registered.
 // This is immutable for the server's lifetime — ReadOnly must not be
 // changed after New returns.
-func New(version string, manager *plugin.Manager, cfg *config.Config, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger) *mcpserver.MCPServer {
+func New(version string, manager *plugin.Manager, cfg *config.Config, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry) *mcpserver.MCPServer {
 	srv := mcpserver.NewMCPServer(
 		"wtmcp",
 		version,
@@ -57,7 +58,7 @@ func New(version string, manager *plugin.Manager, cfg *config.Config, index *Too
 		if manifest.Output.Format != "" {
 			outputFormat = manifest.Output.Format
 		}
-		registerPluginTools(srv, manager, manifest, outputFormat, cfg.Output.ToonFallback, progressive, cfg.ReadOnly, collector, auditor)
+		registerPluginTools(srv, manager, manifest, outputFormat, cfg.Output.ToonFallback, progressive, cfg.ReadOnly, collector, auditor, rateLimiter)
 	}
 
 	// Register disabled plugin tools with [DISABLED] descriptions
@@ -70,7 +71,7 @@ func New(version string, manager *plugin.Manager, cfg *config.Config, index *Too
 	RegisterPluginResources(srv, manager, collector)
 
 	// Built-in management tools
-	registerManagementTools(srv, manager, cfg, index, collector, auditor)
+	registerManagementTools(srv, manager, cfg, index, collector, auditor, rateLimiter)
 
 	// tool_search — useful in both modes
 	registerToolSearch(srv, index)
@@ -78,7 +79,7 @@ func New(version string, manager *plugin.Manager, cfg *config.Config, index *Too
 	return srv
 }
 
-func registerPluginTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, manifest *plugin.Manifest, outputFormat string, toonFallback bool, progressive bool, readOnly bool, collector *stats.Collector, auditor *audit.Logger) {
+func registerPluginTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, manifest *plugin.Manifest, outputFormat string, toonFallback bool, progressive bool, readOnly bool, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry) {
 	var skipped int
 	for _, toolDef := range manifest.Tools {
 		if readOnly && !toolDef.IsReadOnly() {
@@ -129,6 +130,13 @@ func registerPluginTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, manifest
 						inputRaw, time.Since(start), errMsg)
 				}
 			}()
+
+			if d := rateLimiter.Allow(plugName); d > 0 {
+				outputText = fmt.Sprintf("rate limited — retry after %s", d.Truncate(time.Millisecond))
+				isErr = true
+				errMsg = outputText
+				return mcp.NewToolResultError(outputText), nil
+			}
 
 			_, handle := mgr.CallTool(ctx, toolName)
 			if handle == nil {
@@ -232,7 +240,7 @@ func registerDisabledPluginTools(srv *mcpserver.MCPServer, disabled map[string]p
 	}
 }
 
-func registerManagementTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, cfg *config.Config, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger) {
+func registerManagementTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, cfg *config.Config, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry) {
 	// plugin_list: list all plugins and their status
 	srv.AddTool(
 		mcp.NewTool("plugin_list",
@@ -289,7 +297,7 @@ func registerManagementTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, cfg 
 				if !ok || name == "" {
 					return mcp.NewToolResultError("name is required"), nil
 				}
-				if err := ReloadPlugin(ctx, srv, mgr, cfg, name, index, collector, auditor); err != nil {
+				if err := ReloadPlugin(ctx, srv, mgr, cfg, name, index, collector, auditor, rateLimiter); err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
 				return mcp.NewToolResultText(fmt.Sprintf("plugin %s reloaded", name)), nil
@@ -395,7 +403,7 @@ func excludedToolNames() []string {
 //
 // The index is rebuilt to reflect manifest changes, and tool_search is
 // re-registered so its CategorySummary stays current.
-func ReloadPlugin(ctx context.Context, srv *mcpserver.MCPServer, mgr *plugin.Manager, cfg *config.Config, name string, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger) error {
+func ReloadPlugin(ctx context.Context, srv *mcpserver.MCPServer, mgr *plugin.Manager, cfg *config.Config, name string, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry) error {
 	progressive := cfg.Tools.Discovery == "progressive"
 
 	// Collect old tool names, context URIs, and provided resource URIs.
@@ -458,7 +466,7 @@ func ReloadPlugin(ctx context.Context, srv *mcpserver.MCPServer, mgr *plugin.Man
 		if manifest.Output.Format != "" {
 			outputFormat = manifest.Output.Format
 		}
-		registerPluginTools(srv, mgr, manifest, outputFormat, cfg.Output.ToonFallback, progressive, cfg.ReadOnly, collector, auditor)
+		registerPluginTools(srv, mgr, manifest, outputFormat, cfg.Output.ToonFallback, progressive, cfg.ReadOnly, collector, auditor, rateLimiter)
 		registerPluginContextResources(srv, manifest, collector)
 		if manifest.ProvidesResources() {
 			if handle := mgr.Handle(name); handle != nil {
