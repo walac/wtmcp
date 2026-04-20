@@ -93,6 +93,13 @@ func registerPluginTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, manifest
 		plugName := manifest.Name
 		isRead := toolDef.IsReadOnly()
 
+		validator, err := plugin.CompileParamsSchema(toolName, toolDef)
+		if err != nil {
+			log.Printf("[%s] %v — tool disabled", plugName, err)
+			skipped++
+			continue
+		}
+
 		// Record schema token cost.
 		if collector != nil {
 			collector.RecordSchema(toolName, plugName, toolDef.Description, schemaJSON)
@@ -144,6 +151,13 @@ func registerPluginTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, manifest
 			}
 			inputRaw = params
 
+			if err := validator.Validate(params); err != nil {
+				outputText = err.Error()
+				isErr = true
+				errMsg = outputText
+				return mcp.NewToolResultError(outputText), nil
+			}
+
 			callResult, err := handle.CallTool(ctx, toolName, params)
 			if err != nil {
 				var pluginErr *protocol.Error
@@ -167,7 +181,7 @@ func registerPluginTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, manifest
 			return mcp.NewToolResultText(outputText), nil
 		})
 	}
-	if skipped > 0 {
+	if skipped > 0 && readOnly {
 		log.Printf("read-only: skipped %d write tools from %s", skipped, manifest.Name)
 	}
 }
