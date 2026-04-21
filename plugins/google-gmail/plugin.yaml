@@ -13,6 +13,10 @@ services:
     credentials_file: client-credentials.json
     scopes:
       - https://www.googleapis.com/auth/gmail.modify
+  http:
+    base_url: https://gmail.googleapis.com
+    allowed_domains:
+      - gmail.googleapis.com
 
 context_files:
   - context.md

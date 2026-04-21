@@ -13,6 +13,10 @@ services:
     credentials_file: client-credentials.json
     scopes:
       - https://www.googleapis.com/auth/documents
+  http:
+    base_url: https://docs.googleapis.com
+    allowed_domains:
+      - docs.googleapis.com
 
 context_files:
   - context.md

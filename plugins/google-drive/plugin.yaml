@@ -13,6 +13,10 @@ services:
     credentials_file: client-credentials.json
     scopes:
       - https://www.googleapis.com/auth/drive.readonly
+  http:
+    base_url: https://www.googleapis.com
+    allowed_domains:
+      - www.googleapis.com
 
 context_files:
   - context.md
