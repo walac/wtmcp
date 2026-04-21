@@ -24,6 +24,9 @@ type Message struct {
 	Error   *Error          `json:"error,omitempty"`
 	Actions []Action        `json:"actions,omitempty"`
 
+	// init_ok fields
+	Domains []string `json:"domains,omitempty"`
+
 	// resource provider fields
 	URI       string        `json:"uri,omitempty"`
 	Resources []ResourceDef `json:"resources,omitempty"`

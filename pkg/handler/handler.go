@@ -46,6 +46,7 @@ type Plugin struct {
 	out          io.Writer
 	nextID       atomic.Int64
 	initFn       func(config json.RawMessage) error
+	initDomains  []string
 	resourceList ResourceListFunc
 	resourceRead ResourceReadFunc
 	logger       *log.Logger
@@ -73,6 +74,14 @@ func (p *Plugin) Handle(name string, fn ToolFunc) {
 // The function receives the plugin config from the core.
 func (p *Plugin) OnInit(fn func(config json.RawMessage) error) {
 	p.initFn = fn
+}
+
+// SetInitDomains declares domains that should be added to the proxy's
+// allowlist for this plugin. Call from within the OnInit callback.
+// The domains are included in the init_ok response to the core.
+// Only effective for persistent plugins (oneshot plugins have no init).
+func (p *Plugin) SetInitDomains(domains []string) {
+	p.initDomains = domains
 }
 
 // OnListResources registers a function that returns the plugin's resources.
@@ -132,7 +141,7 @@ func (p *Plugin) handleInit(msg Message) {
 			return
 		}
 	}
-	p.send(Message{ID: msg.ID, Type: TypeInitOK})
+	p.send(Message{ID: msg.ID, Type: TypeInitOK, Domains: p.initDomains})
 }
 
 func (p *Plugin) handleToolCall(msg Message) {

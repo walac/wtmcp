@@ -377,6 +377,7 @@ func (m *Manager) startLevel(ctx context.Context, names []string) {
 		}
 		log.Printf("loaded plugin %s (v%s, %s, %s)", r.name,
 			r.handle.manifest.Version, r.handle.manifest.Execution, r.duration.Round(time.Millisecond))
+		m.registerDynamicDomains(r.name, r.handle)
 	}
 	m.handlesMu.Unlock()
 }
@@ -396,12 +397,45 @@ func (m *Manager) Load(ctx context.Context, name string) error {
 		}
 	}
 
+	m.registerDynamicDomains(name, handle)
+
 	m.handlesMu.Lock()
 	m.handles[name] = handle
 	m.handlesMu.Unlock()
 	log.Printf("loaded plugin %s (v%s, %s, %s)", name,
 		handle.manifest.Version, handle.manifest.Execution, time.Since(start).Round(time.Millisecond))
 	return nil
+}
+
+const maxDynamicDomains = 10
+
+// registerDynamicDomains validates and registers domains from the
+// plugin's init_ok response with the proxy allowlist.
+func (m *Manager) registerDynamicDomains(name string, handle *Handle) {
+	domains := handle.InitDomains()
+	if len(domains) == 0 {
+		return
+	}
+
+	if len(domains) > maxDynamicDomains {
+		log.Printf("[%s] WARNING: init_ok declared %d domains, capped at %d",
+			name, len(domains), maxDynamicDomains)
+		domains = domains[:maxDynamicDomains]
+	}
+
+	var valid []string
+	for _, d := range domains {
+		if err := validateDomain(d); err != nil {
+			log.Printf("[%s] rejected dynamic domain %q: %v", name, d, err)
+			continue
+		}
+		valid = append(valid, d)
+	}
+
+	if len(valid) > 0 {
+		m.proxy.AddAllowedDomains(name, valid)
+		log.Printf("[%s] registered dynamic domains: %v", name, valid)
+	}
 }
 
 // preparePlugin resolves config, registers with the proxy, and creates

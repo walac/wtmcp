@@ -104,6 +104,19 @@ func (p *Proxy) SetRateLimiter(rl *ratelimit.Registry) {
 	p.rateLimiter = rl
 }
 
+// AddAllowedDomains appends dynamically discovered domains to a
+// plugin's proxy allowlist. Must be called before the plugin starts
+// accepting tool calls (i.e., in the sequential result-collection
+// phase after Start() returns).
+func (p *Proxy) AddAllowedDomains(pluginName string, domains []string) {
+	pa, ok := p.plugins[pluginName]
+	if !ok {
+		log.Printf("proxy: AddAllowedDomains for unknown plugin %q", pluginName)
+		return
+	}
+	pa.AllowedDomains = append(pa.AllowedDomains, domains...)
+}
+
 func (p *Proxy) auditHTTP(ctx context.Context, pluginName, method, rawURL string, status int, size int64) {
 	if p.auditor == nil {
 		return

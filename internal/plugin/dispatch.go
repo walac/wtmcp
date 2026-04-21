@@ -56,6 +56,14 @@ func (h *Handle) Start(ctx context.Context) error {
 	return nil
 }
 
+// InitDomains returns dynamic domains registered during plugin init.
+func (h *Handle) InitDomains() []string {
+	if h.process == nil {
+		return nil
+	}
+	return h.process.Domains
+}
+
 // IsReady returns true if the handle can accept tool calls.
 // Non-persistent (oneshot) plugins are always ready; persistent
 // plugins are ready once Start has been called and succeeded.
