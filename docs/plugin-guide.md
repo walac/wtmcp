@@ -239,6 +239,57 @@ allowed_domains:
   # https://other.example.com:8443 → other.example.com
 ```
 
+### Dynamic Domains (init_ok)
+
+Plugins that discover their target URLs at init time (e.g., from
+environment variables) can register additional allowed domains via
+the `init_ok` response. In Go handlers, call `p.SetInitDomains()`
+from within `OnInit`:
+
+```go
+p.OnInit(func(_ json.RawMessage) error {
+    url := os.Getenv("MY_SERVICE_URL")
+    p.SetInitDomains([]string{extractHost(url)})
+    return nil
+})
+```
+
+Dynamic domains are validated against the same rules as
+`allowed_domains` (no wildcards, no IPs, no localhost). Maximum
+10 domains per plugin.
+
+### Per-Domain Auth Bindings
+
+Plugins that connect to multiple instances of the same service
+(e.g., multiple GitLab servers) can register per-domain auth
+bindings. Each binding maps a domain to an env var name containing
+the token for that domain. The core resolves env var names from
+the plugin's credential group and creates per-domain auth
+providers.
+
+```go
+p.OnInit(func(_ json.RawMessage) error {
+    // Register domains for proxy allowlist
+    p.SetInitDomains([]string{"gitlab.com", "gitlab.internal.com"})
+    // Map each domain to its token env var
+    p.SetAuthBindings(map[string]string{
+        "gitlab.com":          "GITLAB_PUBLIC_TOKEN",
+        "gitlab.internal.com": "GITLAB_INTERNAL_TOKEN",
+    })
+    return nil
+})
+```
+
+When auth bindings are present, the proxy injects the correct
+token for each request based on the target domain. Requests to
+domains without a binding receive no auth (error). The plugin
+never accesses token values — only env var names are transmitted.
+
+Auth bindings require `services.auth` in plugin.yaml to define
+the shared auth shape (type, header, prefix). The `token` field
+in `services.auth` is used only for single-instance mode (when
+no auth bindings are registered).
+
 ## Wire Protocol
 
 All communication is JSON objects separated by newlines (JSON-lines).
