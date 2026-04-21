@@ -302,14 +302,25 @@ func (p *Proxy) buildRequest(ctx context.Context, fullURL string, req protocol.M
 			return nil, fmt.Errorf("build multipart: %w", err)
 		}
 	} else if req.Body != nil {
-		if len(req.Body) > 0 && req.Body[0] == '"' {
+		switch {
+		case req.BodyEncoding == "base64":
+			var encoded string
+			if err := json.Unmarshal(req.Body, &encoded); err != nil {
+				return nil, fmt.Errorf("base64 body must be a JSON string: %w", err)
+			}
+			decoded, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				return nil, fmt.Errorf("decode base64 body: %w", err)
+			}
+			bodyReader = bytes.NewReader(decoded)
+		case len(req.Body) > 0 && req.Body[0] == '"':
 			var s string
 			if err := json.Unmarshal(req.Body, &s); err == nil {
 				bodyReader = strings.NewReader(s)
 			} else {
 				bodyReader = strings.NewReader(string(req.Body))
 			}
-		} else {
+		default:
 			bodyReader = strings.NewReader(string(req.Body))
 		}
 	}
