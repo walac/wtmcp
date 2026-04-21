@@ -34,6 +34,7 @@ type Config struct {
 	Stats          StatsConfig     `yaml:"stats"`
 	Security       SecurityConfig  `yaml:"security"`
 	Audit          AuditConfig     `yaml:"audit"`
+	Sandbox        SandboxConfig   `yaml:"sandbox"`
 	Providers      ProvidersConfig `yaml:"providers"`
 	Secrets        SecretsConfig   `yaml:"secrets"`
 }
@@ -118,6 +119,29 @@ type AuditConfig struct {
 	ScrubFields []string `yaml:"scrub_fields"`
 }
 
+// SandboxConfig controls plugin process sandboxing via arapuca.
+type SandboxConfig struct {
+	Enabled  *bool                            `yaml:"enabled"`
+	Defaults SandboxResourceLimits            `yaml:"defaults"`
+	Plugins  map[string]SandboxResourceLimits `yaml:"plugins"`
+}
+
+// SandboxEnabled returns whether sandboxing is enabled (default: true).
+func (s SandboxConfig) SandboxEnabled() bool {
+	if s.Enabled == nil {
+		return true
+	}
+	return *s.Enabled
+}
+
+// SandboxResourceLimits defines resource caps for sandboxed plugins.
+type SandboxResourceLimits struct {
+	MaxMemoryMB   uint64 `yaml:"max_memory_mb"`
+	MaxCPUPct     uint32 `yaml:"max_cpu_pct"`
+	MaxPIDs       uint32 `yaml:"max_pids"`
+	MaxFileSizeMB uint64 `yaml:"max_file_size_mb"`
+}
+
 // ProvidersConfig controls which auth providers are active.
 type ProvidersConfig struct {
 	Disabled []string `yaml:"disabled"`
@@ -161,6 +185,14 @@ func DefaultConfig() *Config {
 			Tokenizer:     "chars",
 			Persist:       true,
 			RetentionDays: 90,
+		},
+		Sandbox: SandboxConfig{
+			Defaults: SandboxResourceLimits{
+				MaxMemoryMB:   512,
+				MaxCPUPct:     100,
+				MaxPIDs:       64,
+				MaxFileSizeMB: 100,
+			},
 		},
 	}
 }
