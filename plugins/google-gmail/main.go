@@ -12,7 +12,6 @@ import (
 	"google.golang.org/api/gmail/v1"
 	"google.golang.org/api/option"
 
-	googleauth "github.com/LeGambiArt/wtmcp/internal/google"
 	"github.com/LeGambiArt/wtmcp/pkg/handler"
 )
 
@@ -21,27 +20,8 @@ var gmailSvc *gmail.Service
 func main() {
 	p := handler.New()
 
-	p.OnInit(func(cfgRaw json.RawMessage) error {
-		var cfg map[string]string
-		if err := json.Unmarshal(cfgRaw, &cfg); err != nil {
-			return fmt.Errorf("parse config: %w", err)
-		}
-
-		credDir := cfg["_credentials_dir"]
-		if credDir == "" {
-			credDir = googleauth.CredentialsDir()
-		}
-
-		client, err := googleauth.NewHTTPClientFromDir(
-			context.Background(),
-			credDir,
-			"token-gmail.json",
-			[]string{"https://www.googleapis.com/auth/gmail.modify"},
-		)
-		if err != nil {
-			return fmt.Errorf("google auth: %w", err)
-		}
-
+	p.OnInit(func(_ json.RawMessage) error {
+		client := handler.NewProxyTransport(p).Client()
 		svc, err := gmail.NewService(context.Background(), option.WithHTTPClient(client))
 		if err != nil {
 			return fmt.Errorf("gmail service: %w", err)
