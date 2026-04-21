@@ -146,6 +146,7 @@ func run() error {
 		if logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil { //nolint:gosec // log file in user's config dir
 			log.SetOutput(logFile)
 			log.SetFlags(log.LstdFlags | log.Lshortfile)
+			log.SetPrefix(fmt.Sprintf("[%d] ", os.Getpid()))
 			fmt.Fprintf(os.Stderr, "wtmcp %s, log file at %s\n", Version, logPath)
 		}
 	}

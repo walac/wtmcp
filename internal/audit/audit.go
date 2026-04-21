@@ -75,8 +75,10 @@ func New(cfg Config) (*Logger, error) {
 		}
 	}
 
+	logger := slog.New(handler).With(slog.Int("pid", os.Getpid()))
+
 	return &Logger{
-		logger:     slog.New(handler),
+		logger:     logger,
 		scrubber:   NewScrubber(scrubFields),
 		file:       file,
 		maxErrLen:  500,
