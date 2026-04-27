@@ -1618,7 +1618,7 @@ func populateTableCell(cell *tableCell, cellStartIndex int64) []*docs.Request {
 	var requests []*docs.Request
 
 	// Skip empty cells - Google Docs already creates cells with an empty paragraph containing \n
-	if len(cell.segments) == 0 || (len(cell.segments) == 1 && cell.segments[0].text == "") {
+	if len(cell.segments) == 0 || (len(cell.segments) == 1 && cell.segments[0].text == "" && !cell.segments[0].isDateField && !cell.segments[0].isPersonField) {
 		return requests
 	}
 

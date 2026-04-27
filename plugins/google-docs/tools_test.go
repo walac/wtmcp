@@ -4387,6 +4387,134 @@ Paragraph`
 	})
 }
 
+func TestPopulateTableCell(t *testing.T) {
+	t.Run("empty cell returns no requests", func(t *testing.T) {
+		cell := tableCell{segments: []markdownSegment{}}
+		reqs := populateTableCell(&cell, 5)
+		if len(reqs) != 0 {
+			t.Errorf("expected 0 requests for empty cell, got %d", len(reqs))
+		}
+	})
+
+	t.Run("single empty text segment returns no requests", func(t *testing.T) {
+		cell := tableCell{segments: []markdownSegment{{text: ""}}}
+		reqs := populateTableCell(&cell, 5)
+		if len(reqs) != 0 {
+			t.Errorf("expected 0 requests for empty text segment, got %d", len(reqs))
+		}
+	})
+
+	t.Run("plain text produces InsertText", func(t *testing.T) {
+		cell := tableCell{segments: []markdownSegment{{text: "hello"}}}
+		reqs := populateTableCell(&cell, 10)
+
+		foundInsert := false
+		for _, req := range reqs {
+			if req.InsertText != nil && req.InsertText.Text == "hello" {
+				foundInsert = true
+				if req.InsertText.Location.Index != 10 {
+					t.Errorf("expected index 10, got %d", req.InsertText.Location.Index)
+				}
+			}
+		}
+		if !foundInsert {
+			t.Error("expected InsertText for plain text cell")
+		}
+	})
+
+	t.Run("bold text produces InsertText and UpdateTextStyle", func(t *testing.T) {
+		cell := tableCell{segments: []markdownSegment{{text: "bold", bold: true}}}
+		reqs := populateTableCell(&cell, 5)
+
+		hasInsert := false
+		hasBoldStyle := false
+		for _, req := range reqs {
+			if req.InsertText != nil && req.InsertText.Text == "bold" {
+				hasInsert = true
+			}
+			if req.UpdateTextStyle != nil && req.UpdateTextStyle.TextStyle.Bold {
+				hasBoldStyle = true
+			}
+		}
+		if !hasInsert {
+			t.Error("expected InsertText")
+		}
+		if !hasBoldStyle {
+			t.Error("expected UpdateTextStyle with Bold=true")
+		}
+	})
+
+	t.Run("link produces InsertText and UpdateTextStyle with link", func(t *testing.T) {
+		cell := tableCell{segments: []markdownSegment{{text: "Google", linkURL: "https://google.com"}}}
+		reqs := populateTableCell(&cell, 5)
+
+		hasLink := false
+		for _, req := range reqs {
+			if req.UpdateTextStyle != nil &&
+				req.UpdateTextStyle.TextStyle.Link != nil &&
+				req.UpdateTextStyle.TextStyle.Link.Url == "https://google.com" {
+				hasLink = true
+			}
+		}
+		if !hasLink {
+			t.Error("expected UpdateTextStyle with link")
+		}
+	})
+
+	t.Run("date chip produces InsertDate", func(t *testing.T) {
+		cell := tableCell{segments: []markdownSegment{{isDateField: true, dateValue: "2026-04-27"}}}
+		reqs := populateTableCell(&cell, 5)
+
+		hasDate := false
+		for _, req := range reqs {
+			if req.InsertDate != nil {
+				hasDate = true
+				if req.InsertDate.Location.Index != 5 {
+					t.Errorf("expected index 5, got %d", req.InsertDate.Location.Index)
+				}
+			}
+		}
+		if !hasDate {
+			t.Error("expected InsertDate for date chip")
+		}
+	})
+
+	t.Run("person chip produces InsertPerson", func(t *testing.T) {
+		cell := tableCell{segments: []markdownSegment{{isPersonField: true, personIdentifier: "user@example.com"}}}
+		reqs := populateTableCell(&cell, 5)
+
+		hasPerson := false
+		for _, req := range reqs {
+			if req.InsertPerson != nil {
+				hasPerson = true
+				if req.InsertPerson.PersonProperties.Email != "user@example.com" {
+					t.Errorf("expected email user@example.com, got %s", req.InsertPerson.PersonProperties.Email)
+				}
+			}
+		}
+		if !hasPerson {
+			t.Error("expected InsertPerson for person chip")
+		}
+	})
+
+	t.Run("inline code produces Courier New font", func(t *testing.T) {
+		cell := tableCell{segments: []markdownSegment{{text: "code", isInlineCode: true}}}
+		reqs := populateTableCell(&cell, 5)
+
+		hasCourier := false
+		for _, req := range reqs {
+			if req.UpdateTextStyle != nil &&
+				req.UpdateTextStyle.TextStyle.WeightedFontFamily != nil &&
+				req.UpdateTextStyle.TextStyle.WeightedFontFamily.FontFamily == "Courier New" {
+				hasCourier = true
+			}
+		}
+		if !hasCourier {
+			t.Error("expected Courier New for inline code")
+		}
+	})
+}
+
 func TestTableCellFormattingExtraction(t *testing.T) {
 	doc := &docs.Document{
 		Body: &docs.Body{
