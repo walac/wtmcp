@@ -96,7 +96,8 @@ func LoadEnvGroups(envDir string) (EnvLoadResult, error) {
 
 	entries, err := os.ReadDir(envDir)
 	if err != nil {
-		return result, fmt.Errorf("read %s: %w", envDir, err)
+		result.DirError = fmt.Sprintf("read %s: %v", envDir, err)
+		return result, nil //nolint:nilerr // captured in DirError
 	}
 
 	// Sort for deterministic order
