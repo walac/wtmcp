@@ -40,6 +40,7 @@ type Manager struct {
 	configDisabled map[string]*Manifest // plugins skipped via plugins.disabled config
 	envGroups      config.EnvGroups
 	envErrors      map[string]string // credential group → error message
+	envDirError    string            // env.d directory-level error
 	workdir        string
 	envDir         string
 	authReg        *auth.Registry
@@ -54,9 +55,12 @@ type Manager struct {
 // NewManager creates a plugin manager. envErrors maps credential
 // group names to their load errors (from LoadEnvGroups). Plugins
 // whose credential_group appears in envErrors will be disabled
-// during LoadAll instead of loaded. envDir is the resolved env.d
-// directory path used to re-read env files on plugin reload.
-func NewManager(authReg *auth.Registry, p *proxy.Proxy, c cache.Store, cfg *config.Config, envGroups config.EnvGroups, envErrors map[string]string, workdir, envDir string) *Manager {
+// during LoadAll instead of loaded. envDirError, if non-empty,
+// indicates the env.d directory itself has a problem (bad
+// permissions, stat failure) — all credential-dependent plugins
+// will be disabled. envDir is the resolved env.d directory path
+// used to re-read env files on plugin reload.
+func NewManager(authReg *auth.Registry, p *proxy.Proxy, c cache.Store, cfg *config.Config, envGroups config.EnvGroups, envErrors map[string]string, envDirError, workdir, envDir string) *Manager {
 	if envErrors == nil {
 		envErrors = make(map[string]string)
 	}
@@ -67,6 +71,7 @@ func NewManager(authReg *auth.Registry, p *proxy.Proxy, c cache.Store, cfg *conf
 		configDisabled: make(map[string]*Manifest),
 		envGroups:      envGroups,
 		envErrors:      envErrors,
+		envDirError:    envDirError,
 		workdir:        workdir,
 		envDir:         envDir,
 		authReg:        authReg,
@@ -216,6 +221,10 @@ func (m *Manager) LoadAll(ctx context.Context) error {
 		}
 
 		if manifest.CredentialGroup != "" {
+			if m.envDirError != "" {
+				m.disablePlugin(name, "[env.d directory] "+m.envDirError)
+				continue
+			}
 			if errMsg, ok := m.envErrors[manifest.CredentialGroup]; ok {
 				m.disablePlugin(name, errMsg)
 				continue
@@ -658,14 +667,17 @@ func (m *Manager) disablePlugin(name, reason string) {
 	log.Printf("plugin %s disabled: %s", name, reason)
 }
 
-// sanitizeReason strips the workdir prefix from paths in error
-// messages to avoid leaking the full filesystem layout (including
-// username) in [DISABLED] stubs visible to the LLM.
+// sanitizeReason strips the workdir and envDir prefixes from paths
+// in error messages to avoid leaking the full filesystem layout
+// (including username) in [DISABLED] stubs visible to the LLM.
 func (m *Manager) sanitizeReason(reason string) string {
-	if m.workdir == "" {
-		return reason
+	if m.workdir != "" {
+		reason = strings.ReplaceAll(reason, m.workdir+"/", "")
 	}
-	return strings.ReplaceAll(reason, m.workdir+"/", "")
+	if m.envDir != "" && !strings.HasPrefix(m.envDir, m.workdir+"/") {
+		reason = strings.ReplaceAll(reason, m.envDir, "env.d")
+	}
+	return reason
 }
 
 // ConfigDisabledPlugins returns plugins that were skipped during

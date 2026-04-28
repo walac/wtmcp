@@ -139,6 +139,11 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load env: %w", err)
 	}
+	if envResult.DirError != "" {
+		msg := fmt.Sprintf("WARNING: env.d directory error, all credential plugins disabled: %s", envResult.DirError)
+		log.Println(msg)
+		fmt.Fprintln(os.Stderr, msg)
+	}
 	for group, msg := range envResult.Errors {
 		log.Printf("WARNING: env group %s disabled: %s", group, msg)
 	}
@@ -167,7 +172,7 @@ func run() error {
 	cacheStore := cache.NewMemoryStore()
 	httpProxy := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
 
-	mgr := plugin.NewManager(authReg, httpProxy, cacheStore, cfg, envResult.Groups, envResult.Errors, wd, envDir)
+	mgr := plugin.NewManager(authReg, httpProxy, cacheStore, cfg, envResult.Groups, envResult.Errors, envResult.DirError, wd, envDir)
 
 	if err := mgr.Discover(cfg.PluginDirs, cfg.UserPluginDir); err != nil {
 		return fmt.Errorf("plugin discovery: %w", err)
@@ -271,6 +276,9 @@ func runCheck() error {
 	fmt.Printf("env groups: %d\n", len(result.EnvGroups))
 	for group := range result.EnvGroups {
 		fmt.Printf("  - %s\n", group)
+	}
+	if result.EnvDirError != "" {
+		fmt.Printf("env.d directory error: %s\n", result.EnvDirError)
 	}
 	if len(result.EnvErrors) > 0 {
 		fmt.Printf("env group errors: %d\n", len(result.EnvErrors))

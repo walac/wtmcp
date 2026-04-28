@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"log"
 	"path/filepath"
 
 	"github.com/LeGambiArt/wtmcp/internal/config"
@@ -16,12 +17,13 @@ type DiscoveryOptions struct {
 
 // DiscoveryResult contains the results of plugin discovery.
 type DiscoveryResult struct {
-	Workdir    string
-	ConfigPath string // Resolved config file path (for write-back)
-	Config     *config.Config
-	EnvGroups  map[string]map[string]string
-	EnvErrors  map[string]string
-	Manager    *Manager
+	Workdir     string
+	ConfigPath  string // Resolved config file path (for write-back)
+	Config      *config.Config
+	EnvGroups   map[string]map[string]string
+	EnvErrors   map[string]string
+	EnvDirError string // env.d directory-level error, if any
+	Manager     *Manager
 }
 
 // Discover performs plugin discovery without loading plugins.
@@ -52,6 +54,9 @@ func Discover(opts DiscoveryOptions) (*DiscoveryResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load env: %w", err)
 	}
+	if envResult.DirError != "" {
+		log.Printf("WARNING: env.d directory error: %s", envResult.DirError)
+	}
 
 	// When SkipConfigFiltering is set, temporarily clear the enabled
 	// and disabled lists so all plugins end up in Manifests(). Restore
@@ -65,7 +70,7 @@ func Discover(opts DiscoveryOptions) (*DiscoveryResult, error) {
 	}
 
 	// Create manager with nil dependencies (discovery only)
-	mgr := NewManager(nil, nil, nil, cfg, envResult.Groups, envResult.Errors, workdir, envDir)
+	mgr := NewManager(nil, nil, nil, cfg, envResult.Groups, envResult.Errors, envResult.DirError, workdir, envDir)
 
 	// Discover plugins (without loading/starting them)
 	if err := mgr.Discover(cfg.PluginDirs, cfg.UserPluginDir); err != nil {
@@ -78,11 +83,12 @@ func Discover(opts DiscoveryOptions) (*DiscoveryResult, error) {
 	}
 
 	return &DiscoveryResult{
-		Workdir:    workdir,
-		ConfigPath: cfgPath,
-		Config:     cfg,
-		EnvGroups:  envResult.Groups,
-		EnvErrors:  envResult.Errors,
-		Manager:    mgr,
+		Workdir:     workdir,
+		ConfigPath:  cfgPath,
+		Config:      cfg,
+		EnvGroups:   envResult.Groups,
+		EnvErrors:   envResult.Errors,
+		EnvDirError: envResult.DirError,
+		Manager:     mgr,
 	}, nil
 }

@@ -53,7 +53,7 @@ func newTestManager(t *testing.T) *Manager {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	return NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	return NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 }
 
 var echoScript = `#!/bin/bash
@@ -101,7 +101,7 @@ func TestManagerDiscoverSkipsConfigDisabled(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -123,7 +123,7 @@ func TestManagerDiscoverPartialDisable(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -172,7 +172,7 @@ tools:
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -192,7 +192,7 @@ func TestManagerDiscoverWarnsUnknownDisabled(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 
 	// Capture log output
 	var buf strings.Builder
@@ -245,7 +245,7 @@ tools:
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 
 	var buf strings.Builder
 	log.SetOutput(&buf)
@@ -271,7 +271,7 @@ func TestManagerConfigDisabledPlugins(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -501,6 +501,63 @@ func TestManagerDiscoverRejectsUserCredentialGroup(t *testing.T) {
 	}
 }
 
+func TestLoadAllDisablesPluginsOnEnvDirError(t *testing.T) {
+	dir := t.TempDir()
+
+	// Plugin WITH credential_group — should be disabled
+	createPluginWithManifest(t, dir, "cred-plugin", `
+name: cred-plugin
+version: "1.0.0"
+description: "Plugin with credentials"
+execution: persistent
+handler: ./handler.sh
+credential_group: myservice
+tools:
+  - name: cred_tool
+    description: "needs creds"
+`)
+
+	// Plugin WITHOUT credential_group — should NOT be disabled
+	createPluginWithManifest(t, dir, "no-cred-plugin", `
+name: no-cred-plugin
+version: "1.0.0"
+description: "Plugin without credentials"
+execution: persistent
+handler: ./handler.sh
+tools:
+  - name: nocred_tool
+    description: "no creds needed"
+`)
+
+	cfg := config.DefaultConfig()
+	authReg := auth.NewRegistry()
+	cacheStore := cache.NewMemoryStore()
+	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "env.d has mode 0755, must not be accessible by group/other", dir, "")
+
+	if err := m.Discover([]string{dir}, ""); err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if err := m.LoadAll(context.Background()); err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+
+	disabled := m.DisabledPlugins()
+	if dp, ok := disabled["cred-plugin"]; !ok {
+		t.Error("cred-plugin should be disabled due to envDirError")
+	} else {
+		if !strings.Contains(dp.Reason, "must not be accessible") {
+			t.Errorf("reason = %q, want dir permission error", dp.Reason)
+		}
+		if !strings.Contains(dp.Reason, "[env.d directory]") {
+			t.Errorf("reason = %q, want [env.d directory] prefix", dp.Reason)
+		}
+	}
+	if _, ok := disabled["no-cred-plugin"]; ok {
+		t.Error("no-cred-plugin should NOT be disabled (no credential_group)")
+	}
+}
+
 // createPluginInDir creates a plugin inside an existing parent directory.
 func createPluginInDir(t *testing.T, parentDir, name, script string) {
 	t.Helper()
@@ -618,7 +675,7 @@ tools:
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -656,7 +713,7 @@ tools:
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -697,7 +754,7 @@ tools:
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -739,7 +796,7 @@ tools:
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -780,7 +837,7 @@ tools:
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -806,7 +863,7 @@ func TestCheckDisabledProvider_NoAuth(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -830,7 +887,7 @@ func TestAllowlistOnlyLoadsEnabledPlugins(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -865,7 +922,7 @@ func TestAllowlistOverridesDisabled(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -893,7 +950,7 @@ func TestEmptyAllowlistUsesDefault(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -1099,6 +1156,7 @@ func TestSanitizeReason(t *testing.T) {
 	tests := []struct {
 		name    string
 		workdir string
+		envDir  string
 		reason  string
 		want    string
 	}{
@@ -1126,11 +1184,25 @@ func TestSanitizeReason(t *testing.T) {
 			reason:  "auth provider disabled",
 			want:    "auth provider disabled",
 		},
+		{
+			name:    "strips custom envDir outside workdir",
+			workdir: "/home/user/.config/wtmcp",
+			envDir:  "/opt/secrets/env.d",
+			reason:  "/opt/secrets/env.d has mode 0755, must not be accessible",
+			want:    "env.d has mode 0755, must not be accessible",
+		},
+		{
+			name:    "envDir under workdir uses workdir stripping only",
+			workdir: "/home/user/.config/wtmcp",
+			envDir:  "/home/user/.config/wtmcp/env.d",
+			reason:  "/home/user/.config/wtmcp/env.d has mode 0755",
+			want:    "env.d has mode 0755",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := &Manager{workdir: tt.workdir}
+			m := &Manager{workdir: tt.workdir, envDir: tt.envDir}
 			got := m.sanitizeReason(tt.reason)
 			if got != tt.want {
 				t.Errorf("sanitizeReason() = %q, want %q", got, tt.want)
