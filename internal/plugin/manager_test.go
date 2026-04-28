@@ -558,6 +558,138 @@ tools:
 	}
 }
 
+func TestReloadRechecksEnvDirPermissions(t *testing.T) {
+	dir := t.TempDir()
+	envDir := filepath.Join(dir, "env.d")
+	if err := os.MkdirAll(envDir, 0o755); err != nil { //nolint:gosec // intentionally insecure for test
+		t.Fatal(err)
+	}
+
+	createPluginWithManifest(t, dir, "svc-plugin", `
+name: svc-plugin
+version: "1.0.0"
+description: "Service plugin"
+execution: persistent
+handler: ./handler.sh
+credential_group: svc
+tools:
+  - name: svc_tool
+    description: "a tool"
+`)
+
+	cfg := config.DefaultConfig()
+	authReg := auth.NewRegistry()
+	cacheStore := cache.NewMemoryStore()
+	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil,
+		"env.d has mode 0755, must not be accessible by group/other",
+		dir, envDir)
+
+	if err := m.Discover([]string{dir}, ""); err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if err := m.LoadAll(context.Background()); err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+	close(m.loadDone) // simulate StartPending completion
+
+	// Plugin should be disabled.
+	if _, ok := m.DisabledPlugins()["svc-plugin"]; !ok {
+		t.Fatal("svc-plugin should be disabled")
+	}
+
+	// Reload while dir is still 0755 — should fail.
+	if err := m.Reload(context.Background(), "svc-plugin"); err == nil {
+		t.Fatal("Reload should fail while dir still has bad permissions")
+	}
+	if m.envDirError == "" {
+		t.Error("envDirError should still be set")
+	}
+
+	// Fix dir permissions and create env file.
+	if err := os.Chmod(envDir, 0o700); err != nil { //nolint:gosec // fixing perms in test
+		t.Fatal(err)
+	}
+	envFile := filepath.Join(envDir, "svc.env")
+	if err := os.WriteFile(envFile, []byte("SVC_TOKEN=secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reload after fix — envDirError should clear, plugin should re-enable.
+	// Load will fail (no real handler binary), but envDirError should
+	// be cleared and the env group should be populated.
+	_ = m.Reload(context.Background(), "svc-plugin")
+
+	if m.envDirError != "" {
+		t.Errorf("envDirError should be cleared after dir fix, got: %q", m.envDirError)
+	}
+	if vars := m.envGroups.Get("svc"); vars == nil {
+		t.Error("env group 'svc' should be populated after reload")
+	} else if vars["SVC_TOKEN"] != "secret" {
+		t.Errorf("SVC_TOKEN = %q, want 'secret'", vars["SVC_TOKEN"])
+	}
+}
+
+func TestReloadDirFixedButFileBadPerms(t *testing.T) {
+	dir := t.TempDir()
+	envDir := filepath.Join(dir, "env.d")
+	if err := os.MkdirAll(envDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create env file with bad permissions (0644).
+	envFile := filepath.Join(envDir, "svc.env")
+	if err := os.WriteFile(envFile, []byte("SVC_TOKEN=secret\n"), 0o644); err != nil { //nolint:gosec // intentionally insecure for test
+		t.Fatal(err)
+	}
+
+	createPluginWithManifest(t, dir, "svc-plugin", `
+name: svc-plugin
+version: "1.0.0"
+description: "Service plugin"
+execution: persistent
+handler: ./handler.sh
+credential_group: svc
+tools:
+  - name: svc_tool
+    description: "a tool"
+`)
+
+	cfg := config.DefaultConfig()
+	authReg := auth.NewRegistry()
+	cacheStore := cache.NewMemoryStore()
+	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil,
+		"env.d had mode 0755, directory error",
+		dir, envDir)
+
+	if err := m.Discover([]string{dir}, ""); err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if err := m.LoadAll(context.Background()); err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+	close(m.loadDone)
+
+	if _, ok := m.DisabledPlugins()["svc-plugin"]; !ok {
+		t.Fatal("svc-plugin should be disabled")
+	}
+
+	// Dir is now 0700 (fixed), but file is still 0644 (bad).
+	// Reload should clear envDirError but fail on the file check.
+	err := m.Reload(context.Background(), "svc-plugin")
+	if err == nil {
+		t.Fatal("Reload should fail due to bad file permissions")
+	}
+
+	if m.envDirError != "" {
+		t.Error("envDirError should be cleared (directory is fine)")
+	}
+	if _, ok := m.DisabledPlugins()["svc-plugin"]; !ok {
+		t.Error("svc-plugin should still be disabled (file perms bad)")
+	}
+}
+
 // createPluginInDir creates a plugin inside an existing parent directory.
 func createPluginInDir(t *testing.T, parentDir, name, script string) {
 	t.Helper()

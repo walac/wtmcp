@@ -61,6 +61,9 @@ type Manager struct {
 // will be disabled. envDir is the resolved env.d directory path
 // used to re-read env files on plugin reload.
 func NewManager(authReg *auth.Registry, p *proxy.Proxy, c cache.Store, cfg *config.Config, envGroups config.EnvGroups, envErrors map[string]string, envDirError, workdir, envDir string) *Manager {
+	if envGroups == nil {
+		envGroups = make(config.EnvGroups)
+	}
 	if envErrors == nil {
 		envErrors = make(map[string]string)
 	}
@@ -561,6 +564,21 @@ func (m *Manager) Reload(ctx context.Context, name string) error {
 		group = manifest.CredentialGroup
 	}
 	if group != "" && m.envDir != "" {
+		// Safe to access envDirError without a mutex: WaitLoaded()
+		// above guarantees LoadAll has completed, and MCP tool
+		// dispatch is single-threaded so Reload calls don't race.
+		if m.envDirError != "" {
+			dirInfo, err := os.Stat(m.envDir)
+			if err != nil {
+				return fmt.Errorf("env.d directory still has issues: %w", err)
+			}
+			if err := config.CheckPermissions(m.envDir, dirInfo); err != nil {
+				return fmt.Errorf("env.d directory still has issues: %w", err)
+			}
+			m.envDirError = ""
+			log.Printf("[%s] env.d directory permissions fixed", name)
+		}
+
 		vars, err := config.LoadSingleEnvGroup(m.envDir, group)
 		if err != nil {
 			if _, wasDisabled := m.disabled[name]; wasDisabled {
