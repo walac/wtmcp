@@ -33,6 +33,7 @@ type Config struct {
 	Tools          ToolsConfig     `yaml:"tools"`
 	Stats          StatsConfig     `yaml:"stats"`
 	Providers      ProvidersConfig `yaml:"providers"`
+	Secrets        SecretsConfig   `yaml:"secrets"`
 }
 
 // HTTPConfig controls the HTTP proxy behavior.
@@ -181,6 +182,10 @@ func Load(configPath, workdir string) (*Config, error) {
 		return nil, fmt.Errorf("stats.retention_days must be >= 0, got %d", cfg.Stats.RetentionDays)
 	}
 
+	if err := ValidateVaultIDConfigs(cfg.Secrets.VaultIDs); err != nil {
+		return nil, err
+	}
+
 	if cfg.HTTP.Timeout > 0 && cfg.Plugins.ToolCallTimeout > 0 &&
 		cfg.HTTP.Timeout >= cfg.Plugins.ToolCallTimeout {
 		log.Printf("WARNING: http.timeout (%s) >= plugins.tool_call_timeout (%s); "+
@@ -207,6 +212,15 @@ func applyWorkdirDefaults(cfg *Config, workdir string) {
 		cfg.Cache.Dir = paths.CacheDir
 	} else {
 		cfg.Cache.Dir = ResolveEnvVars(cfg.Cache.Dir)
+	}
+
+	if cfg.Secrets.VaultPasswordFile != "" {
+		cfg.Secrets.VaultPasswordFile = ResolveEnvVars(cfg.Secrets.VaultPasswordFile)
+	}
+	for id, path := range cfg.Secrets.VaultIDs {
+		if path != "" {
+			cfg.Secrets.VaultIDs[id] = ResolveEnvVars(path)
+		}
 	}
 
 	// Build plugin dirs: system dirs, then user dir (if enabled).
