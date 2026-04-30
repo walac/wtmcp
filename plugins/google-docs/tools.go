@@ -2415,19 +2415,67 @@ func convertMarkdownToRequests(segments []markdownSegment, startIndex int64) []*
 	return requests
 }
 
-type writeTextParams struct {
+const maxReadFileSize = 10 << 20 // 10 MB
+
+func readFileForWrite(filePath string) ([]byte, error) {
+	if workDir == "" {
+		return nil, fmt.Errorf("file_path requires a configured working directory")
+	}
+
+	if !filepath.IsAbs(filePath) {
+		filePath = filepath.Join(workDir, filePath)
+	}
+
+	resolvedWork, err := filepath.EvalSymlinks(workDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve work dir: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve path: %w", err)
+	}
+
+	absWork, err := filepath.Abs(resolvedWork)
+	if err != nil {
+		return nil, fmt.Errorf("abs work dir: %w", err)
+	}
+	absResolved, err := filepath.Abs(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("abs file path: %w", err)
+	}
+	if !strings.HasPrefix(absResolved, absWork+string(os.PathSeparator)) &&
+		absResolved != absWork {
+		return nil, fmt.Errorf("file path escapes working directory: %s", filePath)
+	}
+
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("stat file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file: %s", filePath)
+	}
+	if info.Size() > maxReadFileSize {
+		return nil, fmt.Errorf("file too large: %d bytes (max %d)", info.Size(), maxReadFileSize)
+	}
+
+	return os.ReadFile(resolved)
+}
+
+type writeParams struct {
 	DocumentIDOrURL string `json:"document_id_or_url"`
-	Text            string `json:"text"`
+	FilePath        string `json:"file_path"`
+	Content         string `json:"content"`
 	IsMarkdown      bool   `json:"is_markdown"`
 	AppendToEnd     bool   `json:"append_to_end"`
 	InsertIndex     int64  `json:"insert_index"`
 }
 
-func toolWriteText(params, _ json.RawMessage) (any, error) {
-	// Initialize with defaults matching plugin.yaml contract
-	p := writeTextParams{
+func toolWrite(params, _ json.RawMessage) (any, error) {
+	p := writeParams{
 		IsMarkdown:  true,
 		AppendToEnd: true,
+		InsertIndex: 1,
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("parse params: %w", err)
@@ -2435,8 +2483,19 @@ func toolWriteText(params, _ json.RawMessage) (any, error) {
 	if p.DocumentIDOrURL == "" {
 		return nil, fmt.Errorf("document_id_or_url is required")
 	}
-	if p.Text == "" {
-		return nil, fmt.Errorf("text is required")
+
+	text := p.Content
+	usedFilePath := false
+	if text == "" && p.FilePath != "" {
+		data, err := readFileForWrite(p.FilePath)
+		if err != nil {
+			return nil, err
+		}
+		text = string(data)
+		usedFilePath = true
+	}
+	if text == "" {
+		return nil, fmt.Errorf("either 'content' or 'file_path' must be provided")
 	}
 
 	docID := extractDocumentID(p.DocumentIDOrURL)
@@ -2447,148 +2506,71 @@ func toolWriteText(params, _ json.RawMessage) (any, error) {
 		}, nil
 	}
 
-	// Get current document to find the end index
 	doc, err := docsSvc.Documents.Get(docID).Do()
 	if err != nil {
 		return nil, fmt.Errorf("get document: %w", err)
 	}
 
-	// Determine insertion index
 	insertIndex := p.InsertIndex
 	isAppendingToNonEmptyDoc := false
 	if p.AppendToEnd {
-		// Find the end of the document (before the final newline)
 		if doc.Body == nil || doc.Body.Content == nil || len(doc.Body.Content) == 0 {
 			return nil, fmt.Errorf("document body is empty or invalid")
 		}
 		insertIndex = doc.Body.Content[len(doc.Body.Content)-1].EndIndex - 1
-		// Check if document has existing content (insertIndex > 1 means non-empty)
 		isAppendingToNonEmptyDoc = insertIndex > 1
 	} else if insertIndex < 1 {
 		return nil, fmt.Errorf("insert_index must be >= 1 (got %d); set append_to_end=true to append", insertIndex)
 	}
 
 	if p.IsMarkdown {
-		// When appending to non-empty document, prepend newline to start new paragraph
-		textToInsert := p.Text
+		textToInsert := text
 		if isAppendingToNonEmptyDoc && !strings.HasPrefix(textToInsert, "\n") {
 			textToInsert = "\n" + textToInsert
 		}
-		// Parse markdown and convert to requests
 		segments := parseMarkdown(textToInsert)
 
-		// Use the shared helper for handling markdown with potential tables
 		result, err := insertMarkdownWithTables(docID, doc.Title, segments, insertIndex)
 		if err != nil {
 			return nil, err
 		}
 
-		// Add character count to result
-		result["characters"] = len(p.Text)
+		result["characters"] = len(text)
+		if usedFilePath {
+			result["source_file"] = p.FilePath
+			result["source_bytes"] = len(text)
+		}
 		return result, nil
 	}
 
 	// Plain text insertion
-	requests := []*docs.Request{
-		{
-			InsertText: &docs.InsertTextRequest{
-				Text:     p.Text,
-				Location: &docs.Location{Index: insertIndex},
+	resp, err := docsSvc.Documents.BatchUpdate(docID, &docs.BatchUpdateDocumentRequest{
+		Requests: []*docs.Request{
+			{
+				InsertText: &docs.InsertTextRequest{
+					Text:     text,
+					Location: &docs.Location{Index: insertIndex},
+				},
 			},
 		},
-	}
-
-	// Execute the batch update
-	batchUpdateReq := &docs.BatchUpdateDocumentRequest{
-		Requests: requests,
-	}
-
-	resp, err := docsSvc.Documents.BatchUpdate(docID, batchUpdateReq).Do()
+	}).Do()
 	if err != nil {
 		return nil, fmt.Errorf("batch update: %w", err)
 	}
 
-	return map[string]any{
+	result := map[string]any{
 		"document_id":  docID,
 		"title":        doc.Title,
 		"status":       "success",
 		"insert_index": insertIndex,
-		"characters":   len(p.Text),
+		"characters":   len(text),
 		"replies":      len(resp.Replies),
 		"tables":       0,
-	}, nil
-}
-
-type writeMarkdownParams struct {
-	DocumentIDOrURL string `json:"document_id_or_url"`
-	Markdown        string `json:"markdown"`
-	AppendToEnd     bool   `json:"append_to_end"`
-	InsertIndex     int64  `json:"insert_index"`
-}
-
-func toolWriteMarkdown(params, _ json.RawMessage) (any, error) {
-	p := writeMarkdownParams{AppendToEnd: true}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, fmt.Errorf("parse params: %w", err)
 	}
-	if p.DocumentIDOrURL == "" {
-		return nil, fmt.Errorf("document_id_or_url is required")
+	if usedFilePath {
+		result["source_file"] = p.FilePath
+		result["source_bytes"] = len(text)
 	}
-	if p.Markdown == "" {
-		return nil, fmt.Errorf("markdown is required")
-	}
-
-	docID := extractDocumentID(p.DocumentIDOrURL)
-	if docID == "" {
-		return map[string]string{
-			"error": "could not extract document ID from input",
-			"input": p.DocumentIDOrURL,
-		}, nil
-	}
-
-	// Get current document to find the end index
-	doc, err := docsSvc.Documents.Get(docID).Do()
-	if err != nil {
-		return nil, fmt.Errorf("get document: %w", err)
-	}
-
-	// Determine insertion index
-	insertIndex := p.InsertIndex
-	isAppendingToNonEmptyDoc := false
-	if p.AppendToEnd {
-		// Find the end of the document (before the final newline)
-		if doc.Body == nil || doc.Body.Content == nil || len(doc.Body.Content) == 0 {
-			return nil, fmt.Errorf("document body is empty or invalid")
-		}
-		insertIndex = doc.Body.Content[len(doc.Body.Content)-1].EndIndex - 1
-		// Check if document has existing content (insertIndex > 1 means non-empty)
-		isAppendingToNonEmptyDoc = insertIndex > 1
-	} else if insertIndex < 1 {
-		return nil, fmt.Errorf("insert_index must be >= 1 (got %d); set append_to_end=true to append", insertIndex)
-	}
-
-	// When appending to non-empty document, prepend newline to start new paragraph
-	markdownToInsert := p.Markdown
-	if isAppendingToNonEmptyDoc && !strings.HasPrefix(markdownToInsert, "\n") {
-		markdownToInsert = "\n" + markdownToInsert
-	}
-
-	// Parse markdown and reject tables
-	segments := parseMarkdown(markdownToInsert)
-
-	for _, seg := range segments {
-		if seg.isTable && seg.table != nil {
-			return nil, fmt.Errorf("tables are not supported in gdocs_write_markdown; use gdocs_write_text with is_markdown: true")
-		}
-	}
-
-	result, err := insertMarkdownWithTables(docID, doc.Title, segments, insertIndex)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add character count to result
-	result["characters"] = len(p.Markdown)
 	return result, nil
 }
 

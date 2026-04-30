@@ -5017,7 +5017,7 @@ func TestTableCellFormattingExtraction(t *testing.T) {
 	}
 }
 
-func TestWriteMarkdownTableRejection(t *testing.T) {
+func TestParseMarkdownTableDetection(t *testing.T) {
 	markdown := "# Title\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n"
 	segments := parseMarkdown(markdown)
 

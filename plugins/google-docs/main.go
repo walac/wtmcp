@@ -14,7 +14,10 @@ import (
 	"github.com/LeGambiArt/wtmcp/pkg/handler"
 )
 
-var docsSvc *docs.Service
+var (
+	docsSvc *docs.Service
+	workDir string
+)
 
 func main() {
 	p := handler.New()
@@ -45,6 +48,7 @@ func main() {
 			return fmt.Errorf("docs service: %w", err)
 		}
 		docsSvc = svc
+		workDir = cfg["_work_dir"]
 		return nil
 	})
 
@@ -53,8 +57,7 @@ func main() {
 	p.Handle("gdocs_get_document_markdown", toolGetDocumentMarkdown)
 	p.Handle("gdocs_summarize_document", toolSummarizeDocument)
 	p.Handle("gdocs_extract_and_get_from_text", toolExtractAndGet)
-	p.Handle("gdocs_write_text", toolWriteText)
-	p.Handle("gdocs_write_markdown", toolWriteMarkdown)
+	p.Handle("gdocs_write", toolWrite)
 	p.Handle("gdocs_create_document", toolCreateDocument)
 
 	if err := p.Run(); err != nil {

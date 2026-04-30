@@ -86,18 +86,21 @@ Extract Google Docs URLs from text and fetch summaries for each document.
 
 **Returns:** Array of document summaries
 
-### gdocs_write_text
+### gdocs_write
 
-Write or append text to a Google Doc with optional markdown formatting. When markdown is enabled, the text is parsed and converted to rich text with proper formatting.
+Write content to a Google Doc with optional markdown formatting. Provide either `content` (inline text) or `file_path` (local file to read from). For large documents, prefer `file_path` to avoid token generation overhead.
 
 **Parameters:**
 - `document_id_or_url` (required): Document ID or URL
-- `text` (required): Text content to write
-- `is_markdown` (default: true): Parse text as markdown and apply rich formatting
-- `append_to_end` (default: true): Append text to the end of the document
-- `insert_index` (default: 0): Character index for insertion (used if append_to_end is false)
+- `file_path`: Path to a local file to read content from (preferred for large documents)
+- `content`: Inline content to write (alternative to file_path)
+- `is_markdown` (default: true): Parse content as markdown and apply rich formatting
+- `append_to_end` (default: true): Append content to the end of the document
+- `insert_index` (default: 1): Character index for insertion (used if append_to_end is false)
 
-**Returns:** Document ID, title, status, insert index, character count, replies, tables
+One of `content` or `file_path` must be provided. When both are provided, `content` takes precedence.
+
+**Returns:** Document ID, title, status, insert index, character count, replies, tables. When `file_path` is used, also returns `source_file` and `source_bytes`.
 
 **Supported markdown formatting:**
 - Headings: `# H1`, `## H2`, `### H3`, `#### H4`, `##### H5`, `###### H6`
@@ -111,21 +114,7 @@ Write or append text to a Google Doc with optional markdown formatting. When mar
 - Date smart chips: `@today` (current date) or `@date(YYYY-MM-DD)` (specific date)
 - Person smart chips: `@(email)` (e.g., `@(user@example.com)`)
 
-When `is_markdown` is false, text is inserted as plain text without formatting.
-
-### gdocs_write_markdown
-
-Write Markdown-formatted text to a Google Doc with rich formatting. Does not support tables — use `gdocs_write_text` with `is_markdown: true` for table content.
-
-**Parameters:**
-- `document_id_or_url` (required): Document ID or Google Docs URL
-- `markdown` (required): Markdown content to write
-- `append_to_end` (default: true): Append text to the end of the document
-- `insert_index` (default: 0): Character index for insertion (used if append_to_end is false)
-
-**Returns:** Document ID, title, status, insert index, character count, replies, tables
-
-**Supported formatting:** Same as `gdocs_write_text` markdown mode (headings, bold, italic, underline, strikethrough, links, lists, code blocks, inline code, smart chips) **except tables**.
+When `is_markdown` is false, content is inserted as plain text without formatting.
 
 ### gdocs_create_document
 
@@ -149,7 +138,7 @@ It also accepts raw document IDs directly.
 
 ## Markdown Writing Support
 
-The `gdocs_write_text` and `gdocs_write_markdown` tools support converting Markdown to Google Docs rich formatting. This section documents all supported features and syntax.
+The `gdocs_write` tool supports converting Markdown to Google Docs rich formatting. This section documents all supported features and syntax.
 
 ### Text Formatting
 
@@ -219,7 +208,7 @@ When using nested lists, the inner list format might not match the expected one 
 
 ### Tables
 
-**Note:** Tables are only supported via `gdocs_write_text` with `is_markdown: true`. The `gdocs_write_markdown` tool does not support tables.
+**Note:** Tables are supported via `gdocs_write` with `is_markdown: true` (the default).
 
 Standard markdown table syntax with pipe delimiters:
 
@@ -460,7 +449,7 @@ italic = true
 | Date chips (`@today`) | ✅ Yes | Current date |
 | Date chips (`@date(YYYY-MM-DD)`) | ✅ Yes | Specific date |
 | Person chips (`@(email)`) | ✅ Yes | |
-| Tables | ✅ Yes | `gdocs_write_text` only; standard markdown syntax with optional headers, rich text in cells, max 50x20 |
+| Tables | ✅ Yes | `gdocs_write` with `is_markdown: true`; standard markdown syntax with optional headers, rich text in cells, max 50x20 |
 | Code blocks (` ``` `) | ✅ Yes | Converted to/from monospace font with syntax highlighting (10 languages supported) |
 | Inline code (`` ` ``) | ✅ Yes | Converted to/from monospace font (Courier New) |
 | Blockquotes | ❌ No | Not yet supported |
@@ -493,11 +482,21 @@ italic = true
 }
 ```
 
-### Write markdown text to a document
+### Write markdown content to a document
 ```json
 {
   "document_id_or_url": "https://docs.google.com/document/d/ABC123/edit",
-  "text": "# Meeting Notes\n\nDiscussed **important** topics:\n- Item 1\n- Item 2\n\nSee [documentation](https://example.com) for details.",
+  "content": "# Meeting Notes\n\nDiscussed **important** topics:\n- Item 1\n- Item 2\n\nSee [documentation](https://example.com) for details.",
+  "is_markdown": true,
+  "append_to_end": true
+}
+```
+
+### Write content from a file
+```json
+{
+  "document_id_or_url": "https://docs.google.com/document/d/ABC123/edit",
+  "file_path": "report.md",
   "is_markdown": true,
   "append_to_end": true
 }
@@ -507,7 +506,7 @@ italic = true
 ```json
 {
   "document_id_or_url": "https://docs.google.com/document/d/ABC123/edit",
-  "text": "# Project Status\n\n| Task | Owner | Status | Due |\n| ---- | ----- | ------ | --- |\n| Design | **Alice** | ✅ Complete | @date(2026-04-01) |\n| Development | @(bob@company.com) | 🔄 In Progress | @date(2026-05-15) |\n| Testing | **Charlie** | ⏸️ Not Started | @date(2026-06-01) |\n",
+  "content": "# Project Status\n\n| Task | Owner | Status | Due |\n| ---- | ----- | ------ | --- |\n| Design | **Alice** | ✅ Complete | @date(2026-04-01) |\n| Development | @(bob@company.com) | 🔄 In Progress | @date(2026-05-15) |\n| Testing | **Charlie** | ⏸️ Not Started | @date(2026-06-01) |\n",
   "is_markdown": true,
   "append_to_end": true
 }
@@ -519,7 +518,7 @@ italic = true
 ```json
 {
   "document_id_or_url": "https://docs.google.com/document/d/ABC123/edit",
-  "text": "# Employee Directory\n\n| ---- | ---- | -------- |\n| John | Manager | New York |\n| Anne | Employee | Los Angeles |\n| Michael | Employee | Chicago |\n",
+  "content": "# Employee Directory\n\n| ---- | ---- | -------- |\n| John | Manager | New York |\n| Anne | Employee | Los Angeles |\n| Michael | Employee | Chicago |\n",
   "is_markdown": true,
   "append_to_end": true
 }
@@ -531,7 +530,7 @@ italic = true
 ```json
 {
   "document_id_or_url": "ABC123",
-  "text": "This is plain text without formatting.",
+  "content": "This is plain text without formatting.",
   "is_markdown": false,
   "append_to_end": true
 }

@@ -86,51 +86,36 @@ tools:
         default: 5
         description: "Maximum number of documents to fetch"
 
-  - name: gdocs_write_text
+  - name: gdocs_write
     access: write
     visibility: primary
-    description: "Write or append text to a Google Doc with optional markdown formatting"
+    description: >-
+      Write content to a Google Doc with optional markdown formatting.
+      Provide either 'content' (inline text) or 'file_path' (local file
+      to read from). For large documents, prefer file_path to avoid token
+      generation overhead.
     params:
       document_id_or_url:
         type: string
         required: true
         description: "Document ID or Google Docs URL"
-      text:
+      file_path:
         type: string
-        required: true
-        description: "Text content to write"
+        description: "Path to a local file to read content from. Required if content is not provided. Preferred for large documents."
+      content:
+        type: string
+        description: "Inline content to write. Required if file_path is not provided."
       is_markdown:
         type: boolean
         default: true
-        description: "Parse text as markdown and apply rich formatting (headings, bold, italic, underline, strikethrough, links, lists, tables, code, smart chips)"
+        description: "Parse content as markdown and apply rich formatting (headings, bold, italic, underline, strikethrough, links, lists, tables, code, smart chips)"
       append_to_end:
         type: boolean
         default: true
-        description: "Append text to the end of the document"
+        description: "Append content to the end of the document"
       insert_index:
         type: integer
-        default: 0
-        description: "Character index for insertion (used if append_to_end is false)"
-
-  - name: gdocs_write_markdown
-    access: write
-    description: "Write Markdown-formatted text to a Google Doc with rich formatting (headings, bold, italic, links, etc.). Does not support tables — use gdocs_write_text with is_markdown for tables."
-    params:
-      document_id_or_url:
-        type: string
-        required: true
-        description: "Document ID or Google Docs URL"
-      markdown:
-        type: string
-        required: true
-        description: "Markdown content to write"
-      append_to_end:
-        type: boolean
-        default: true
-        description: "Append text to the end of the document"
-      insert_index:
-        type: integer
-        default: 0
+        default: 1
         description: "Character index for insertion (used if append_to_end is false)"
 
   - name: gdocs_create_document
