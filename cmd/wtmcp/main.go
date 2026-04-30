@@ -410,4 +410,83 @@ func printVaultStatus(result *plugin.DiscoveryResult) {
 			fmt.Printf("  - %s (encrypted, %s, decryption ok)\n", group, vaultInfo)
 		}
 	}
+
+	printCredentialFileStatus(cfg, resolve)
+}
+
+// printCredentialFileStatus reports vault-encrypted credential files
+// in credentials/<group>/ directories.
+func printCredentialFileStatus(cfg *config.Config, resolve func(string) ([]byte, error)) {
+	if cfg.CredentialsDir == "" {
+		return
+	}
+	groups, err := os.ReadDir(cfg.CredentialsDir)
+	if err != nil {
+		return
+	}
+
+	var found bool
+	for _, group := range groups {
+		if !group.IsDir() {
+			continue
+		}
+		groupDir := filepath.Join(cfg.CredentialsDir, group.Name())
+		files, err := os.ReadDir(groupDir)
+		if err != nil {
+			continue
+		}
+		for _, file := range files {
+			if file.IsDir() {
+				continue
+			}
+			path := filepath.Join(groupDir, file.Name())
+			f, err := os.Open(path) //nolint:gosec // credentials dir from config
+			if err != nil {
+				continue
+			}
+			header := make([]byte, 15)
+			n, _ := f.Read(header)
+			_ = f.Close()
+			if !vault.IsAnsibleVault(header[:n]) {
+				continue
+			}
+
+			if !found {
+				fmt.Printf("credential files:\n")
+				found = true
+			}
+
+			data, err := os.ReadFile(path) //nolint:gosec // credentials dir from config
+			if err != nil {
+				fmt.Printf("  - %s/%s (encrypted, read error)\n", group.Name(), file.Name())
+				continue
+			}
+
+			hdr, err := vault.ParseHeader(strings.SplitN(string(data), "\n", 2)[0])
+			if err != nil {
+				fmt.Printf("  - %s/%s (encrypted, invalid header)\n", group.Name(), file.Name())
+				continue
+			}
+
+			vaultInfo := "vault " + hdr.Version
+			if hdr.VaultID != "" {
+				vaultInfo += " id=" + hdr.VaultID
+			}
+
+			password, err := resolve(hdr.VaultID)
+			if err != nil {
+				fmt.Printf("  - %s/%s (encrypted, %s, no password)\n", group.Name(), file.Name(), vaultInfo)
+				continue
+			}
+
+			plaintext, err := vault.Decrypt(data, password)
+			vault.ZeroBytes(password)
+			vault.ZeroBytes(plaintext)
+			if err != nil {
+				fmt.Printf("  - %s/%s (encrypted, %s, decryption failed)\n", group.Name(), file.Name(), vaultInfo)
+			} else {
+				fmt.Printf("  - %s/%s (encrypted, %s, decryption ok)\n", group.Name(), file.Name(), vaultInfo)
+			}
+		}
+	}
 }
