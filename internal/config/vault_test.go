@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -302,6 +303,41 @@ func TestValidateVaultIDConfigs(t *testing.T) {
 	}
 	if err := ValidateVaultIDConfigs(tooLong); err == nil {
 		t.Error("expected error for vault ID too long")
+	}
+}
+
+func TestResolveVaultPassword_Concurrent(t *testing.T) {
+	dir := t.TempDir()
+	passFile := filepath.Join(dir, "vault-pass")
+	if err := os.WriteFile(passFile, []byte("concurrent-password\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := DefaultConfig()
+	cfg.Secrets.VaultPasswordFile = passFile
+	resolve := ResolveVaultPassword(cfg)
+
+	const goroutines = 20
+	errs := make(chan error, goroutines)
+	for range goroutines {
+		go func() {
+			password, err := resolve("")
+			if err != nil {
+				errs <- err
+				return
+			}
+			if string(password) != "concurrent-password" {
+				errs <- fmt.Errorf("got %q, want %q", password, "concurrent-password")
+				return
+			}
+			errs <- nil
+		}()
+	}
+
+	for range goroutines {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent resolve: %v", err)
+		}
 	}
 }
 

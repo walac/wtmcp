@@ -211,3 +211,32 @@ func TestTrackerClosePluginDoesNotAffectOthers(t *testing.T) {
 
 	tracker.CloseAll()
 }
+
+func TestDoubleClose(t *testing.T) {
+	sf, err := Create("test-double-close")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	_ = sf.Write([]byte("data"))
+
+	if err := sf.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := sf.Close(); err != nil {
+		t.Fatalf("second Close should not error: %v", err)
+	}
+}
+
+func TestTrackerClosePluginThenCloseAll(t *testing.T) {
+	tracker := NewTracker()
+
+	sf, err := Create("double-cleanup")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	_ = sf.Write([]byte("data"))
+	tracker.TrackForPlugin("my-plugin", sf)
+
+	tracker.ClosePlugin("my-plugin")
+	tracker.CloseAll()
+}

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -431,6 +432,50 @@ func TestLoadEnvGroupsVaultWrongPassword(t *testing.T) {
 	}
 	if !strings.Contains(result.Errors["wrong"], "HMAC verification failed") {
 		t.Errorf("error = %q", result.Errors["wrong"])
+	}
+}
+
+func TestLoadEnvGroupsVault12WithID(t *testing.T) {
+	dir := t.TempDir()
+	envDir := filepath.Join(dir, "env.d")
+	if err := os.MkdirAll(envDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	prodPassword := []byte("prod-vault-password")
+	plaintext := []byte("PROD_SECRET=vault-id-routed-value\n")
+
+	encrypted, err := vault.EncryptWithID(plaintext, prodPassword, "prod")
+	if err != nil {
+		t.Fatalf("EncryptWithID: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(envDir, "service.env"), encrypted, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := EnvLoadOptions{
+		VaultPassword: func(vaultID string) ([]byte, error) {
+			if vaultID == "prod" {
+				return prodPassword, nil
+			}
+			return nil, fmt.Errorf("unknown vault ID: %s", vaultID)
+		},
+	}
+	result, err := LoadEnvGroups(envDir, opts)
+	if err != nil {
+		t.Fatalf("LoadEnvGroups: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("unexpected errors: %v", result.Errors)
+	}
+
+	vars := result.Groups["service"]
+	if vars == nil {
+		t.Fatal("missing 'service' group")
+	}
+	if vars["PROD_SECRET"] != "vault-id-routed-value" {
+		t.Errorf("PROD_SECRET = %q", vars["PROD_SECRET"])
 	}
 }
 

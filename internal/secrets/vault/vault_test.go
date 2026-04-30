@@ -447,6 +447,30 @@ func TestDecryptInteropWrongPassword(t *testing.T) {
 	}
 }
 
+func TestDecryptBitFlipTamperDetection(t *testing.T) {
+	password := []byte("tamper-test-password")
+	plaintext := []byte("SECRET=tamper-test-value\n")
+
+	encrypted, err := Encrypt(plaintext, password)
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+
+	// Flip a single bit in the hex body (not the header).
+	data := []byte(string(encrypted))
+	for i := len("$ANSIBLE_VAULT;1.1;AES256\n") + 10; i < len(data); i++ {
+		if data[i] != '\n' {
+			data[i] ^= 0x01
+			break
+		}
+	}
+
+	_, err = Decrypt(data, password)
+	if err == nil {
+		t.Fatal("expected error after bit-flip tamper, got nil")
+	}
+}
+
 func TestParseHeaderRejectsVaultIDOn11(t *testing.T) {
 	_, err := ParseHeader("$ANSIBLE_VAULT;1.1;AES256;sneaky")
 	if err == nil {
