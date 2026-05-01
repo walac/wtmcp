@@ -74,6 +74,9 @@ func TestParseMarkdownHeadings(t *testing.T) {
 		{"h3", "### Section", 3, "Section"},
 		{"h6", "###### Deep", 6, "Deep"},
 		{"not heading (no space)", "#NoSpace", 0, ""},
+		{"hashes only (no space)", "###", 0, ""},
+		{"single hash (no space)", "#", 0, ""},
+		{"hash space empty body", "# ", 0, ""},
 	}
 
 	for _, tt := range tests {

@@ -969,9 +969,10 @@ func parseMarkdown(markdown string) []markdownSegment {
 			continue
 		}
 
-		// Check for headings
+		// Check for headings — requires space after # per CommonMark
 		headingLevel := 0
 		if strings.HasPrefix(trimmedLine, "#") {
+			foundSpace := false
 		loop:
 			for j, ch := range trimmedLine {
 				switch ch {
@@ -979,11 +980,15 @@ func parseMarkdown(markdown string) []markdownSegment {
 					headingLevel++
 				case ' ':
 					trimmedLine = trimmedLine[j+1:]
+					foundSpace = true
 					break loop
 				default:
 					headingLevel = 0
 					break loop
 				}
+			}
+			if !foundSpace || strings.TrimSpace(trimmedLine) == "" {
+				headingLevel = 0
 			}
 		}
 
