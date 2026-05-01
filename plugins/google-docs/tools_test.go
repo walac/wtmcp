@@ -1374,8 +1374,8 @@ func TestHeadingFollowedByNormalText(t *testing.T) {
 		if !foundHeadingStyle {
 			t.Errorf("HEADING_1 style not applied in requests")
 		}
-		if foundNormalTextStyle {
-			t.Errorf("NORMAL_TEXT style should NOT be applied (found %d instances), as it wipes run-level formatting", normalTextStyleCount)
+		if !foundNormalTextStyle {
+			t.Error("NORMAL_TEXT style should be applied to body text to prevent heading style bleed")
 		}
 
 		// Verify that heading style range includes trailing newline
@@ -1582,6 +1582,130 @@ func TestBlankLineAfterHeadingSkipped(t *testing.T) {
 	})
 }
 
+func TestParagraphJoining(t *testing.T) {
+	allText := func(segments []markdownSegment) string {
+		var s string
+		for _, seg := range segments {
+			s += seg.text
+		}
+		return s
+	}
+
+	t.Run("hard-wrapped lines joined into one paragraph", func(t *testing.T) {
+		segs := parseMarkdown("line one\nline two\n\nnew para")
+		merged := mergeSegments(segs)
+		text := allText(merged)
+		if !strings.Contains(text, "line one line two") {
+			t.Errorf("hard-wrapped lines should be joined with space, got %q", text)
+		}
+		if !strings.Contains(text, "new para") {
+			t.Errorf("new paragraph should be separate, got %q", text)
+		}
+	})
+
+	t.Run("hard wrap after heading produces joined body", func(t *testing.T) {
+		segs := parseMarkdown("## Heading\n\nbody one\nbody two")
+		merged := mergeSegments(segs)
+		text := allText(merged)
+		if !strings.Contains(text, "body one body two") {
+			t.Errorf("body lines after heading should be joined, got %q", text)
+		}
+	})
+
+	t.Run("single-line paragraph unchanged", func(t *testing.T) {
+		segs := parseMarkdown("just one line")
+		merged := mergeSegments(segs)
+		text := allText(merged)
+		if !strings.Contains(text, "just one line") {
+			t.Errorf("single-line paragraph should be preserved, got %q", text)
+		}
+	})
+
+	t.Run("blank lines still create paragraph breaks", func(t *testing.T) {
+		segs := parseMarkdown("para one\n\npara two")
+		merged := mergeSegments(segs)
+		text := allText(merged)
+		if !strings.Contains(text, "para one\n") || !strings.Contains(text, "para two") {
+			t.Errorf("blank line should separate paragraphs, got %q", text)
+		}
+		if strings.Contains(text, "para one para two") {
+			t.Error("paragraphs separated by blank line should NOT be joined")
+		}
+	})
+
+	t.Run("flush before heading", func(t *testing.T) {
+		segs := parseMarkdown("body text\n# Heading")
+		merged := mergeSegments(segs)
+		text := allText(merged)
+		if !strings.Contains(text, "body text") {
+			t.Errorf("body text should be present, got %q", text)
+		}
+		foundHeading := false
+		for _, seg := range merged {
+			if seg.heading == 1 {
+				foundHeading = true
+			}
+		}
+		if !foundHeading {
+			t.Error("heading should be present after body text flush")
+		}
+	})
+
+	t.Run("flush before list", func(t *testing.T) {
+		segs := parseMarkdown("body text\n- list item")
+		merged := mergeSegments(segs)
+		text := allText(merged)
+		if strings.Contains(text, "body text list item") {
+			t.Error("body text should not be joined with list item")
+		}
+	})
+
+	t.Run("flush before code fence", func(t *testing.T) {
+		segs := parseMarkdown("body text\n```\ncode\n```")
+		merged := mergeSegments(segs)
+		text := allText(merged)
+		if strings.Contains(text, "body textcode") || strings.Contains(text, "body text code") {
+			t.Error("body text should not be joined with code block")
+		}
+	})
+
+	t.Run("flush before table", func(t *testing.T) {
+		segs := parseMarkdown("body text\n| A | B |\n| --- | --- |\n| 1 | 2 |")
+		merged := mergeSegments(segs)
+		text := allText(merged)
+		if !strings.Contains(text, "body text") {
+			t.Errorf("body text should be present, got %q", text)
+		}
+		foundTable := false
+		for _, seg := range segs {
+			if seg.isTable {
+				foundTable = true
+			}
+		}
+		if !foundTable {
+			t.Error("table should be present after body text flush")
+		}
+	})
+
+	t.Run("inline formatting across join boundary", func(t *testing.T) {
+		segs := parseMarkdown("**bold** word\ncontinued here")
+		merged := mergeSegments(segs)
+		text := allText(merged)
+		if !strings.Contains(text, "bold") || !strings.Contains(text, "continued here") {
+			t.Errorf("joined text should contain both parts, got %q", text)
+		}
+		foundBold := false
+		for _, seg := range merged {
+			if seg.bold && strings.Contains(seg.text, "bold") {
+				foundBold = true
+			}
+		}
+		if !foundBold {
+			t.Error("bold formatting should be preserved across join boundary")
+		}
+	})
+}
+
 func TestNoTrailingEmptyParagraph(t *testing.T) {
 	t.Run("last text segment has no trailing newline", func(t *testing.T) {
 		segments := parseMarkdown("# Heading\n\nText")
@@ -1686,7 +1810,8 @@ func TestCRLFNormalization(t *testing.T) {
 			fullText += seg.text
 		}
 
-		expected := "line1\nline2\nline3\nline4\n"
+		// After paragraph joining, consecutive body lines are joined with space
+		expected := "line1 line2 line3 line4\n"
 		if fullText != expected {
 			t.Errorf("Normalized text = %q, want %q", fullText, expected)
 		}

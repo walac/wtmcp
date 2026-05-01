@@ -889,11 +889,26 @@ func parseMarkdown(markdown string) []markdownSegment {
 	var tableBuffer []string
 	inTable := false
 
+	// Body text buffer: consecutive non-special lines are joined with
+	// a space into a single paragraph. In markdown, a single newline
+	// within a paragraph is a soft wrap — only a blank line (double
+	// newline) is a paragraph break.
+	var bodyBuffer []string
+	flushBody := func() {
+		if len(bodyBuffer) == 0 {
+			return
+		}
+		joined := strings.Join(bodyBuffer, " ")
+		segments = append(segments, parseSimpleFormatting(joined+"\n")...)
+		bodyBuffer = nil
+	}
+
 	for _, line := range lines {
 		trimmedLine := strings.TrimSpace(line)
 
 		// Check for code fence boundaries (``` with optional language)
 		if strings.HasPrefix(trimmedLine, "```") {
+			flushBody()
 			// Close any open table before code block
 			if inTable {
 				inTable = false
@@ -946,8 +961,8 @@ func parseMarkdown(markdown string) []markdownSegment {
 		isTableRow := reTableRow.MatchString(escapeTablePipes(line))
 
 		if isTableRow {
-			// Start or continue buffering table lines
 			if !inTable {
+				flushBody()
 				inTable = true
 				tableBuffer = []string{}
 			}
@@ -958,15 +973,12 @@ func parseMarkdown(markdown string) []markdownSegment {
 		// Not a table row - process any buffered table
 		if inTable {
 			inTable = false
-			// Try to parse buffered lines as a table
 			if table := parseMarkdownTable(tableBuffer); table != nil {
-				// Valid table
 				segments = append(segments, markdownSegment{
 					isTable: true,
 					table:   table,
 				})
 			} else {
-				// Invalid table - treat as plain text paragraphs
 				for _, bufferedLine := range tableBuffer {
 					segments = append(segments, parseSimpleFormatting(bufferedLine+"\n")...)
 				}
@@ -976,6 +988,7 @@ func parseMarkdown(markdown string) []markdownSegment {
 
 		// Process non-table line normally
 		if trimmedLine == "" {
+			flushBody()
 			if lastWasHeading {
 				// Skip blank lines immediately after headings
 				continue
@@ -984,6 +997,9 @@ func parseMarkdown(markdown string) []markdownSegment {
 			segments = append(segments, markdownSegment{text: "\n"})
 			continue
 		}
+
+		// Save trimmedLine before the heading parser which may mutate it
+		originalTrimmed := trimmedLine
 
 		// Check for headings — requires space after # per CommonMark
 		headingLevel := 0
@@ -1009,6 +1025,7 @@ func parseMarkdown(markdown string) []markdownSegment {
 		}
 
 		if headingLevel > 0 && headingLevel <= 6 {
+			flushBody()
 			lastWasHeading = true
 			inlineSegs := parseSimpleFormatting(trimmedLine)
 			lineID := nextHeadingLineID
@@ -1025,6 +1042,7 @@ func parseMarkdown(markdown string) []markdownSegment {
 
 		// Check for ordered list
 		if orderedListMatch := reOrderedList.FindStringSubmatch(line); orderedListMatch != nil {
+			flushBody()
 			depth := indentDepth(orderedListMatch[1])
 			listItemText := orderedListMatch[2]
 			inlineSegs := parseSimpleFormatting(listItemText + "\n")
@@ -1038,6 +1056,7 @@ func parseMarkdown(markdown string) []markdownSegment {
 
 		// Check for unordered list
 		if unorderedListMatch := reUnorderedList.FindStringSubmatch(line); unorderedListMatch != nil {
+			flushBody()
 			depth := indentDepth(unorderedListMatch[1])
 			listItemText := unorderedListMatch[3]
 			inlineSegs := parseSimpleFormatting(listItemText + "\n")
@@ -1049,9 +1068,12 @@ func parseMarkdown(markdown string) []markdownSegment {
 			continue
 		}
 
-		// Parse inline formatting
-		segments = append(segments, parseSimpleFormatting(line+"\n")...)
+		// Accumulate body text — joined into a single paragraph on flush
+		bodyBuffer = append(bodyBuffer, originalTrimmed)
 	}
+
+	// Flush any remaining body text
+	flushBody()
 
 	// Handle unclosed code fence: emit accumulated content as code block
 	if inCodeBlock && len(codeBlockLines) > 0 {
@@ -1925,6 +1947,7 @@ func convertMarkdownToRequests(segments []markdownSegment, startIndex int64) []*
 	var headingTextStyleRequests []*docs.Request
 	var inHeading bool
 	var currentHeadingLineID int
+	needsNormalTextReset := true
 
 	for i, seg := range segments {
 		if seg.isTable && seg.table != nil {
@@ -2306,6 +2329,27 @@ func convertMarkdownToRequests(segments []markdownSegment, startIndex int64) []*
 		// Use rune count, not byte length! Multi-byte UTF-8 characters need proper counting
 		endIndex = currentIndex + int64(utf8.RuneCountInString(insertText))
 
+		// Reset paragraph style to NORMAL_TEXT once per paragraph for
+		// non-heading body text. Without this, Google Docs inherits the
+		// preceding heading style. Only apply at a paragraph boundary
+		// (text containing \n marks the end of a paragraph — the next
+		// segment starts a new one that needs the reset).
+		if seg.heading == 0 && !seg.isCodeBlock && !inHeading && needsNormalTextReset {
+			requests = append(requests, &docs.Request{
+				UpdateParagraphStyle: &docs.UpdateParagraphStyleRequest{
+					Range: &docs.Range{
+						StartIndex: currentIndex,
+						EndIndex:   endIndex,
+					},
+					ParagraphStyle: &docs.ParagraphStyle{
+						NamedStyleType: "NORMAL_TEXT",
+					},
+					Fields: "namedStyleType",
+				},
+			})
+			needsNormalTextReset = false
+		}
+
 		// Prepare text style request - ALWAYS apply to ensure formatting is explicitly reset
 		// This prevents bold/italic/underline/strikethrough from "sticking" to subsequent text
 		var textStyle *docs.TextStyle
@@ -2396,7 +2440,14 @@ func convertMarkdownToRequests(segments []markdownSegment, startIndex int64) []*
 				requests = append(requests, headingTextStyleRequests...)
 				inHeading = false
 				headingTextStyleRequests = nil
+				needsNormalTextReset = true
 			}
+		}
+
+		// After a paragraph boundary (\n in text), the next segment
+		// starts a new paragraph that needs a NORMAL_TEXT reset
+		if strings.HasSuffix(insertText, "\n") && seg.heading == 0 {
+			needsNormalTextReset = true
 		}
 
 		currentIndex = endIndex
