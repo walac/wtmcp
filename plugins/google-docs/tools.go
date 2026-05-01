@@ -107,18 +107,26 @@ func extractDocumentID(input string) string {
 }
 
 // saveDocumentFile saves document content to a local file.
-// If outputPath is empty, saves to ./docs/<title>.<ext>.
+// If outputPath is empty, saves to docs/<title>.<ext> under workDir.
 func saveDocumentFile(title, outputPath, content, ext string) (string, error) {
-	baseDir := "docs"
+	if workDir == "" {
+		return "", fmt.Errorf("save requires a configured working directory")
+	}
+
+	resolvedWork, err := filepath.EvalSymlinks(workDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve work dir: %w", err)
+	}
+	baseDir := filepath.Join(resolvedWork, "docs")
 
 	if outputPath == "" {
 		safeTitle := reUnsafeChars.ReplaceAllString(title, "_")
 		safeTitle = filepath.Base(safeTitle)
 		outputPath = filepath.Join(baseDir, safeTitle+ext)
+	} else if !filepath.IsAbs(outputPath) {
+		outputPath = filepath.Join(baseDir, outputPath)
 	}
 
-	// Validate that the resolved path stays within the base directory.
-	// This must happen before any filesystem side effects.
 	absBase, err := filepath.Abs(baseDir)
 	if err != nil {
 		return "", fmt.Errorf("resolve base dir: %w", err)
@@ -136,11 +144,21 @@ func saveDocumentFile(title, outputPath, content, ext string) (string, error) {
 		return "", fmt.Errorf("create output dir: %w", err)
 	}
 
-	if err := os.WriteFile(absOutput, []byte(content), 0o600); err != nil {
+	// Re-resolve after directory creation to catch symlinks in new dirs
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve output dir: %w", err)
+	}
+	finalOutput := filepath.Join(resolvedDir, filepath.Base(absOutput))
+	if !strings.HasPrefix(finalOutput, absBase+string(os.PathSeparator)) {
+		return "", fmt.Errorf("output path escapes base directory after resolution: %s", outputPath)
+	}
+
+	if err := os.WriteFile(finalOutput, []byte(content), 0o600); err != nil {
 		return "", err
 	}
 
-	return absOutput, nil
+	return finalOutput, nil
 }
 
 // extractText extracts plain text from document content.

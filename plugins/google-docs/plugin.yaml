@@ -41,7 +41,7 @@ tools:
         description: "Save to local file"
       output_path:
         type: string
-        description: "Custom output path (default: ./docs/<title>.txt)"
+        description: "Custom output path (default: docs/<title>.txt under working directory)"
 
   - name: gdocs_get_document_markdown
     access: read
@@ -58,7 +58,7 @@ tools:
         description: "Save to local file"
       output_path:
         type: string
-        description: "Custom output path (default: ./docs/<title>.md)"
+        description: "Custom output path (default: docs/<title>.md under working directory)"
 
   - name: gdocs_summarize_document
     access: read

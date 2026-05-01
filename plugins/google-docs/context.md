@@ -40,7 +40,7 @@ Extract plain text content from a Google Doc.
 **Parameters:**
 - `document_id_or_url` (required): Document ID or URL
 - `save_to_file` (default: false): Save to local file
-- `output_path` (optional): Custom output path (default: `./docs/<title>.txt`)
+- `output_path` (optional): Custom output path (default: `docs/<title>.txt`)
 
 **Returns:** Document text with metadata
 
@@ -51,7 +51,7 @@ Convert a Google Doc to Markdown format with formatting preserved.
 **Parameters:**
 - `document_id_or_url` (required): Document ID or URL
 - `save_to_file` (default: false): Save to local file
-- `output_path` (optional): Custom output path (default: `./docs/<title>.md`)
+- `output_path` (optional): Custom output path (default: `docs/<title>.md`)
 
 **Returns:** Markdown content with metadata
 
@@ -559,7 +559,7 @@ italic = true
 ## File Output
 
 When `save_to_file` is enabled, files are saved to:
-- Default directory: `./docs/`
+- Default directory: `docs/` under the working directory
 - Default filename: `<document-title>.<ext>` (sanitized)
 - Custom path can be specified with `output_path`
 

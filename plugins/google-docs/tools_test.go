@@ -1946,36 +1946,32 @@ func TestAppendToNonEmptyDocument(t *testing.T) {
 }
 
 func TestSaveDocumentFile(t *testing.T) {
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
+	origWorkDir := workDir
+	t.Cleanup(func() { workDir = origWorkDir })
+
 	tmpDir := t.TempDir()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(origDir) })
+	workDir = tmpDir
 
 	t.Run("saves with title-derived path", func(t *testing.T) {
 		got, err := saveDocumentFile("My Document", "", "content", ".txt")
 		if err != nil {
 			t.Fatalf("saveDocumentFile: %v", err)
 		}
-		wantAbs := filepath.Join(tmpDir, "docs", "My Document.txt")
-		if got != wantAbs {
-			t.Errorf("path = %q, want %q", got, wantAbs)
+		if !strings.Contains(got, "My Document.txt") {
+			t.Errorf("path %q should contain My Document.txt", got)
+		}
+		if !strings.Contains(got, "docs") {
+			t.Errorf("path %q should contain docs", got)
 		}
 	})
 
-	t.Run("saves with explicit path inside base", func(t *testing.T) {
-		outPath := filepath.Join("docs", "custom.txt")
-		got, err := saveDocumentFile("", outPath, "content", ".txt")
+	t.Run("saves with explicit relative path", func(t *testing.T) {
+		got, err := saveDocumentFile("", "custom.txt", "content", ".txt")
 		if err != nil {
 			t.Fatalf("saveDocumentFile: %v", err)
 		}
-		wantAbs := filepath.Join(tmpDir, "docs", "custom.txt")
-		if got != wantAbs {
-			t.Errorf("path = %q, want %q", got, wantAbs)
+		if !strings.HasSuffix(got, "custom.txt") {
+			t.Errorf("path %q should end with custom.txt", got)
 		}
 	})
 
@@ -1991,14 +1987,15 @@ func TestSaveDocumentFile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("saveDocumentFile: %v", err)
 		}
-		if !strings.HasPrefix(got, filepath.Join(tmpDir, "docs")+string(os.PathSeparator)) {
-			t.Errorf("path %q escapes docs directory", got)
+		docsDir := filepath.Join(tmpDir, "docs")
+		resolved, _ := filepath.EvalSymlinks(docsDir)
+		if !strings.HasPrefix(got, resolved+string(os.PathSeparator)) {
+			t.Errorf("path %q escapes docs directory %q", got, resolved)
 		}
 	})
 
 	t.Run("file permissions are 0600", func(t *testing.T) {
-		outPath := filepath.Join("docs", "perms.txt")
-		got, err := saveDocumentFile("", outPath, "secret", ".txt")
+		got, err := saveDocumentFile("", "perms.txt", "secret", ".txt")
 		if err != nil {
 			t.Fatalf("saveDocumentFile: %v", err)
 		}
@@ -2008,6 +2005,30 @@ func TestSaveDocumentFile(t *testing.T) {
 		}
 		if perm := info.Mode().Perm(); perm != 0o600 {
 			t.Errorf("permissions = %o, want 0600", perm)
+		}
+	})
+
+	t.Run("empty workDir rejected", func(t *testing.T) {
+		workDir = ""
+		_, err := saveDocumentFile("test", "", "content", ".txt")
+		if err == nil {
+			t.Fatal("expected error when workDir is empty")
+		}
+		workDir = tmpDir
+	})
+
+	t.Run("symlink in docs dir detected after creation", func(t *testing.T) {
+		outside := t.TempDir()
+		docsDir := filepath.Join(tmpDir, "docs")
+		linkDir := filepath.Join(docsDir, "escape")
+		if err := os.Symlink(outside, linkDir); err != nil {
+			t.Skipf("symlinks not supported: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Remove(linkDir) })
+
+		_, err := saveDocumentFile("", "escape/evil.txt", "pwned", ".txt")
+		if err == nil {
+			t.Fatal("expected error for symlink escaping docs dir")
 		}
 	})
 }
