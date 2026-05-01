@@ -1216,6 +1216,11 @@ func parseSimpleFormattingWithDepth(text string, depth int) []markdownSegment {
 			endPos := strings.Index(text[pos+2:], "~~")
 			if endPos != -1 {
 				endPos += pos + 2
+				if endPos == pos+2 {
+					segments = append(segments, markdownSegment{text: "~~"})
+					pos += 2
+					continue
+				}
 				innerSegs := parseSimpleFormattingWithDepth(text[pos+2:endPos], depth+1)
 				for i := range innerSegs {
 					innerSegs[i].strikethrough = true
@@ -1236,6 +1241,11 @@ func parseSimpleFormattingWithDepth(text string, depth int) []markdownSegment {
 			endPos := strings.Index(text[pos+2:], "**")
 			if endPos != -1 {
 				endPos += pos + 2
+				if endPos == pos+2 {
+					segments = append(segments, markdownSegment{text: "**"})
+					pos += 2
+					continue
+				}
 				if endPos+2 < len(text) && isWordChar(text[endPos+2]) {
 					segments = append(segments, markdownSegment{text: text[pos : pos+1]})
 					pos++
@@ -1261,6 +1271,11 @@ func parseSimpleFormattingWithDepth(text string, depth int) []markdownSegment {
 			endPos := strings.Index(text[pos+2:], "__")
 			if endPos != -1 {
 				endPos += pos + 2
+				if endPos == pos+2 {
+					segments = append(segments, markdownSegment{text: "__"})
+					pos += 2
+					continue
+				}
 				if endPos+2 < len(text) && isWordChar(text[endPos+2]) {
 					segments = append(segments, markdownSegment{text: text[pos : pos+1]})
 					pos++

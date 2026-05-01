@@ -769,6 +769,76 @@ func TestIntraWordEmphasis(t *testing.T) {
 	})
 }
 
+func TestEmptyDelimiterPairs(t *testing.T) {
+	allText := func(segments []markdownSegment) string {
+		var s string
+		for _, seg := range segments {
+			s += seg.text
+		}
+		return s
+	}
+
+	t.Run("**** preserved as literal", func(t *testing.T) {
+		segs := parseSimpleFormatting("****")
+		if allText(segs) != "****" {
+			t.Errorf("got %q, want ****", allText(segs))
+		}
+	})
+
+	t.Run("____ preserved as literal", func(t *testing.T) {
+		segs := parseSimpleFormatting("____")
+		if allText(segs) != "____" {
+			t.Errorf("got %q, want ____", allText(segs))
+		}
+	})
+
+	t.Run("~~~~ preserved as literal", func(t *testing.T) {
+		segs := parseSimpleFormatting("~~~~")
+		if allText(segs) != "~~~~" {
+			t.Errorf("got %q, want ~~~~", allText(segs))
+		}
+	})
+
+	t.Run("****text preserved", func(t *testing.T) {
+		segs := parseSimpleFormatting("Some ****text")
+		if allText(segs) != "Some ****text" {
+			t.Errorf("got %q, want Some ****text", allText(segs))
+		}
+	})
+
+	t.Run("**bold** still works", func(t *testing.T) {
+		segs := parseSimpleFormatting("**bold**")
+		merged := mergeSegments(segs)
+		found := false
+		for _, seg := range merged {
+			if seg.bold && seg.text == "bold" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected bold segment with text bold after merge")
+		}
+	})
+
+	t.Run("****bold**** produces literal+bold+literal", func(t *testing.T) {
+		segs := parseSimpleFormatting("****bold****")
+		merged := mergeSegments(segs)
+		text := allText(merged)
+		if text != "**bold**" {
+			t.Errorf("got %q, want **bold**", text)
+		}
+		foundBold := false
+		for _, seg := range merged {
+			if seg.bold && seg.text == "bold" {
+				foundBold = true
+			}
+		}
+		if !foundBold {
+			t.Error("expected bold segment in ****bold****")
+		}
+	})
+}
+
 func TestUTF8MultiByteSegments(t *testing.T) {
 	allText := func(segments []markdownSegment) string {
 		var s string
