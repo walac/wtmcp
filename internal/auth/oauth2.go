@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,19 +38,26 @@ func NewOAuth2Provider(tokenFile, credentialsFile string, scopes []string, crede
 	if transport == nil {
 		return nil, fmt.Errorf("oauth2: transport must not be nil")
 	}
+	resolvedToken, err := resolveCredentialPath(tokenFile, credentialsDir)
+	if err != nil {
+		return nil, fmt.Errorf("oauth2: token_file: %w", err)
+	}
 	p := &OAuth2Provider{
-		tokenFile:      resolveCredentialPath(tokenFile, credentialsDir),
+		tokenFile:      resolvedToken,
 		credentialsDir: credentialsDir,
 		scopes:         scopes,
 		transport:      transport,
 	}
 
 	// Load OAuth2 client config from credentials file
-	credPath := resolveCredentialPath(credentialsFile, credentialsDir)
-	if cfg, err := loadOAuth2Config(credPath, scopes); err == nil {
+	credPath, err := resolveCredentialPath(credentialsFile, credentialsDir)
+	if err != nil {
+		return nil, fmt.Errorf("oauth2: credentials_file: %w", err)
+	}
+	if cfg, loadErr := loadOAuth2Config(credPath, scopes); loadErr == nil {
 		p.config = cfg
 	} else {
-		log.Printf("oauth2: cannot load credentials from %s: %v", credPath, err)
+		log.Printf("oauth2: cannot load credentials from %s: %v", credPath, loadErr)
 	}
 
 	// Load cached token
@@ -244,16 +252,28 @@ func loadOAuth2Config(path string, scopes []string) (*oauth2.Config, error) {
 	}, nil
 }
 
-func resolveCredentialPath(path, credentialsDir string) string {
+func resolveCredentialPath(path, credentialsDir string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("credential file path is required")
+	}
+	base := credentialsDir
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("cannot determine home directory: %w", err)
+		}
+		base = filepath.Join(home, ".config", "wtmcp", "credentials")
+	}
+	var resolved string
 	if filepath.IsAbs(path) {
-		return path
+		resolved = filepath.Clean(path)
+	} else {
+		resolved = filepath.Clean(filepath.Join(base, path))
 	}
-	if credentialsDir != "" {
-		return filepath.Join(credentialsDir, path)
+	cleanBase := filepath.Clean(base)
+	if resolved != cleanBase &&
+		!strings.HasPrefix(resolved, cleanBase+string(os.PathSeparator)) {
+		return "", fmt.Errorf("credential path escapes credentials directory: %s", path)
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return path
-	}
-	return filepath.Join(home, ".config", "wtmcp", "credentials", path)
+	return resolved, nil
 }

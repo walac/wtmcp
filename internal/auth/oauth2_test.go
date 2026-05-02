@@ -79,15 +79,26 @@ func TestOAuth2ProviderExpiredNoRefresh(t *testing.T) {
 }
 
 func TestOAuth2ProviderNoToken(t *testing.T) {
-	p, _ := NewOAuth2Provider("/nonexistent/token.json", "/nonexistent/creds.json", nil, "", testTransport)
+	dir := t.TempDir()
+	p, err := NewOAuth2Provider("token.json", "creds.json", nil, dir, testTransport)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if p.Available() {
 		t.Error("should not be available without token")
 	}
 
-	_, err := p.Authenticate(context.Background(), nil)
+	_, err = p.Authenticate(context.Background(), nil)
 	if err == nil {
 		t.Error("should error without token")
+	}
+}
+
+func TestOAuth2ProviderRejectsEscape(t *testing.T) {
+	_, err := NewOAuth2Provider("../../etc/shadow", "creds.json", nil, "/opt/creds", testTransport)
+	if err == nil {
+		t.Fatal("expected error for path escape")
 	}
 }
 
@@ -141,9 +152,9 @@ func TestResolveCredentialPath(t *testing.T) {
 		wantAbs bool
 	}{
 		{
-			name:    "absolute path unchanged",
-			path:    "/absolute/path/token.json",
-			dir:     "/some/dir",
+			name:    "absolute path within dir",
+			path:    "/opt/creds/token.json",
+			dir:     "/opt/creds",
 			wantAbs: true,
 		},
 		{
@@ -162,7 +173,10 @@ func TestResolveCredentialPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := resolveCredentialPath(tt.path, tt.dir)
+			result, err := resolveCredentialPath(tt.path, tt.dir)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if tt.wantAbs && !filepath.IsAbs(result) {
 				t.Errorf("expected absolute path, got %q", result)
 			}
