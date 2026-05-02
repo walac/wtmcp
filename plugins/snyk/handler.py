@@ -63,7 +63,11 @@ def http(method, path, query=None, body=None, headers=None, url=None):
     if resp.get("body_encoding") == "base64" and isinstance(body, str):
         import base64
 
-        body = json.loads(base64.b64decode(body))
+        decoded = base64.b64decode(body)
+        try:
+            body = json.loads(decoded)
+        except (json.JSONDecodeError, ValueError):
+            body = decoded.decode("utf-8", errors="replace")
     elif isinstance(body, str):
         try:
             body = json.loads(body)
@@ -215,7 +219,7 @@ def snyk_ignore_issue(params):
     issue_id = params["issue_id"]
     reason = params["reason"]
     reason_type = params.get("reason_type", "not-vulnerable")
-    dry_run = params.get("dry_run", True)
+    dry_run = params.get("dry_run") is not False
 
     valid_types = ("not-vulnerable", "wont-fix", "temporary-ignore")
     if reason_type not in valid_types:
@@ -246,7 +250,7 @@ def snyk_delete_ignore(params):
     org_id = params["org_id"]
     project_id = params["project_id"]
     issue_id = params["issue_id"]
-    dry_run = params.get("dry_run", True)
+    dry_run = params.get("dry_run") is not False
 
     if dry_run:
         return {
