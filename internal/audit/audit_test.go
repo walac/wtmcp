@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -295,4 +296,51 @@ func TestNewScrubber_StillScrubbsValues(t *testing.T) {
 	if obj["data"] != "[REDACTED]" {
 		t.Errorf("NewScrubber should redact JWT values, got: %s", obj["data"])
 	}
+}
+
+func TestScrubberArrayStringValues(t *testing.T) {
+	s := NewScrubber([]string{"password"})
+	jwt := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+
+	t.Run("bare JWT in array", func(t *testing.T) {
+		input := json.RawMessage(fmt.Sprintf(`["%s"]`, jwt))
+		result := s.ScrubJSON(input)
+		var arr []string
+		if err := json.Unmarshal(result, &arr); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if arr[0] != "[REDACTED]" {
+			t.Errorf("expected [REDACTED], got %s", arr[0])
+		}
+	})
+
+	t.Run("mixed safe and sensitive", func(t *testing.T) {
+		input := json.RawMessage(fmt.Sprintf(`["hello", "%s", "world"]`, jwt))
+		result := s.ScrubJSON(input)
+		var arr []string
+		if err := json.Unmarshal(result, &arr); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if arr[0] != "hello" {
+			t.Errorf("safe value changed: %s", arr[0])
+		}
+		if arr[1] != "[REDACTED]" {
+			t.Errorf("JWT not redacted: %s", arr[1])
+		}
+		if arr[2] != "world" {
+			t.Errorf("safe value changed: %s", arr[2])
+		}
+	})
+
+	t.Run("nested array in object", func(t *testing.T) {
+		input := json.RawMessage(fmt.Sprintf(`{"tokens":["%s"]}`, jwt))
+		result := s.ScrubJSON(input)
+		var obj map[string][]string
+		if err := json.Unmarshal(result, &obj); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if obj["tokens"][0] != "[REDACTED]" {
+			t.Errorf("nested JWT not redacted: %s", obj["tokens"][0])
+		}
+	})
 }

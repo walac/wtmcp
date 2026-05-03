@@ -300,6 +300,11 @@ func (s *Scrubber) scrubObject(obj map[string]json.RawMessage, original json.Raw
 func (s *Scrubber) scrubArray(arr []json.RawMessage, original json.RawMessage) json.RawMessage {
 	changed := false
 	for i, elem := range arr {
+		if s.scrubValues && s.isSensitiveValue(elem) {
+			arr[i] = json.RawMessage(`"[REDACTED]"`)
+			changed = true
+			continue
+		}
 		scrubbed := s.ScrubJSON(elem)
 		if string(scrubbed) != string(elem) {
 			arr[i] = scrubbed
