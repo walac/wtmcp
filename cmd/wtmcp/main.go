@@ -403,15 +403,12 @@ func runCheck() error {
 func printVaultStatus(result *plugin.DiscoveryResult) {
 	cfg := result.Config
 
-	// Detect password source from config (env vars may already be
-	// consumed by the Discover() closure, so check config fields
-	// and whether any encrypted groups loaded successfully).
 	passwordSource := "not configured"
 	switch {
 	case cfg.Secrets.VaultPasswordFile != "":
 		passwordSource = fmt.Sprintf("file (%s)", cfg.Secrets.VaultPasswordFile)
-	case len(result.EnvGroups) > 0 || len(result.EnvErrors) > 0:
-		passwordSource = "configured"
+	case len(cfg.Secrets.VaultIDs) > 0:
+		passwordSource = "vault IDs" //nolint:gosec // status label, not a credential
 	}
 	fmt.Printf("vault password: %s\n", passwordSource)
 
@@ -428,9 +425,11 @@ func printVaultStatus(result *plugin.DiscoveryResult) {
 		return
 	}
 
-	// Use a fresh resolver for test-decryption. Env-var-based
-	// passwords were already consumed by Discover(), but the
-	// resolver's internal cache preserves them for reuse here.
+	// Fresh resolver for test-decryption. Note: env-var-based
+	// passwords (WTMCP_VAULT_PASSWORD) were consumed and unset
+	// by Discover()'s resolver, and this new closure has its own
+	// empty cache, so env-var-only configurations will show
+	// "no password" here. See staging/issues/ for the fix.
 	resolve := config.ResolveVaultPassword(cfg)
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".env") {
