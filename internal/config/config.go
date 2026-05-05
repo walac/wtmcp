@@ -212,7 +212,7 @@ func DefaultConfig() *Config {
 			ToonFallback: true,
 		},
 		Tools: ToolsConfig{
-			Discovery: "full",
+			Discovery: "progressive",
 		},
 		Stats: StatsConfig{
 			Enabled:       true,

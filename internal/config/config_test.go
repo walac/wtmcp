@@ -185,8 +185,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Cache.Backend != "memory" {
 		t.Errorf("Cache.Backend = %q, want %q", cfg.Cache.Backend, "memory")
 	}
-	if cfg.Tools.Discovery != "full" {
-		t.Errorf("Tools.Discovery = %q, want full", cfg.Tools.Discovery)
+	if cfg.Tools.Discovery != "progressive" {
+		t.Errorf("Tools.Discovery = %q, want progressive", cfg.Tools.Discovery)
 	}
 }
 
