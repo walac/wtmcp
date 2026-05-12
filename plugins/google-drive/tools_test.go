@@ -429,3 +429,533 @@ func TestToolSearchFiles(t *testing.T) {
 		t.Fatalf("got %d files, want 1", len(list.Files))
 	}
 }
+
+// --- Write tool tests ---
+
+func TestRequireWriteScope(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+
+	hasWriteScope = true
+	if err := requireWriteScope(); err != nil {
+		t.Fatalf("expected nil when hasWriteScope=true, got %v", err)
+	}
+
+	hasWriteScope = false
+	err := requireWriteScope()
+	if err == nil {
+		t.Fatal("expected error when hasWriteScope=false")
+	}
+	if !strings.Contains(err.Error(), "re-authorization") {
+		t.Errorf("error should mention re-authorization, got: %v", err)
+	}
+}
+
+func homeTempFile(t *testing.T, name string, content []byte) string {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, ".cache", "wtmcp-test")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+	return path
+}
+
+func TestToolCreateFolderDryRun(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+	hasWriteScope = true
+
+	result, err := toolCreateFolder(mustJSON(t, map[string]any{
+		"name":             "My Folder",
+		"parent_folder_id": "parent123",
+		"dry_run":          true,
+	}), nil)
+	if err != nil {
+		t.Fatalf("toolCreateFolder dry_run: %v", err)
+	}
+
+	m, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("result type = %T", result)
+	}
+	if m["dry_run"] != true {
+		t.Error("expected dry_run=true")
+	}
+	if m["action"] != "drive_create_folder" {
+		t.Errorf("action = %v", m["action"])
+	}
+	if m["name"] != "My Folder" {
+		t.Errorf("name = %v", m["name"])
+	}
+	if m["parent_folder_id"] != "parent123" {
+		t.Errorf("parent_folder_id = %v", m["parent_folder_id"])
+	}
+}
+
+func TestToolCreateFolderMissingName(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+	hasWriteScope = true
+
+	_, err := toolCreateFolder(mustJSON(t, map[string]any{}), nil)
+	if err == nil {
+		t.Fatal("expected error for missing name")
+	}
+}
+
+func TestToolCreateFolderNoScope(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+	hasWriteScope = false
+
+	_, err := toolCreateFolder(mustJSON(t, map[string]any{
+		"name": "test",
+	}), nil)
+	if err == nil {
+		t.Fatal("expected scope error")
+	}
+	if !strings.Contains(err.Error(), "re-authorization") {
+		t.Errorf("error should mention re-authorization: %v", err)
+	}
+}
+
+func TestToolCreateFolderActual(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+	hasWriteScope = true
+
+	setupDriveTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"folder1","name":"New Folder","mimeType":"application/vnd.google-apps.folder","webViewLink":"https://drive.google.com/drive/folders/folder1"}`)
+	}))
+
+	result, err := toolCreateFolder(mustJSON(t, map[string]any{
+		"name":    "New Folder",
+		"dry_run": false,
+	}), nil)
+	if err != nil {
+		t.Fatalf("toolCreateFolder: %v", err)
+	}
+
+	file, ok := result.(*drive.File)
+	if !ok {
+		t.Fatalf("result type = %T", result)
+	}
+	if file.Id != "folder1" {
+		t.Errorf("id = %q", file.Id)
+	}
+	if file.MimeType != "application/vnd.google-apps.folder" {
+		t.Errorf("mimeType = %q", file.MimeType)
+	}
+}
+
+func TestToolUploadFileDryRun(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+	hasWriteScope = true
+
+	testFile := homeTempFile(t, "hello.txt", []byte("hello"))
+
+	result, err := toolUploadFile(mustJSON(t, map[string]any{
+		"file_path": testFile,
+		"dry_run":   true,
+	}), nil)
+	if err != nil {
+		t.Fatalf("toolUploadFile dry_run: %v", err)
+	}
+
+	m, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("result type = %T", result)
+	}
+	if m["dry_run"] != true {
+		t.Error("expected dry_run=true")
+	}
+	if m["action"] != "drive_upload_file" {
+		t.Errorf("action = %v", m["action"])
+	}
+	if m["name"] != "hello.txt" {
+		t.Errorf("name = %v", m["name"])
+	}
+}
+
+func TestToolUploadFileNoScope(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+	hasWriteScope = false
+
+	_, err := toolUploadFile(mustJSON(t, map[string]any{
+		"file_path": "/tmp/any.txt",
+	}), nil)
+	if err == nil {
+		t.Fatal("expected scope error")
+	}
+	if !strings.Contains(err.Error(), "re-authorization") {
+		t.Errorf("error should mention re-authorization: %v", err)
+	}
+}
+
+func TestToolUploadFileMissingPath(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+	hasWriteScope = true
+
+	_, err := toolUploadFile(mustJSON(t, map[string]any{}), nil)
+	if err == nil {
+		t.Fatal("expected error for missing file_path")
+	}
+}
+
+func TestToolUploadFileRejectsOutsideHome(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+	hasWriteScope = true
+
+	_, err := toolUploadFile(mustJSON(t, map[string]any{
+		"file_path": "/etc/passwd",
+	}), nil)
+	if err == nil {
+		t.Fatal("expected error for path outside home")
+	}
+	if !strings.Contains(err.Error(), "home directory") {
+		t.Errorf("error should mention home directory, got: %v", err)
+	}
+}
+
+func TestToolRenameFileDryRun(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+	hasWriteScope = true
+
+	setupDriveTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"abc123","name":"old-name.txt","mimeType":"text/plain"}`)
+	}))
+
+	result, err := toolRenameFile(mustJSON(t, map[string]any{
+		"file_id": "abc123",
+		"name":    "new-name.txt",
+		"dry_run": true,
+	}), nil)
+	if err != nil {
+		t.Fatalf("toolRenameFile dry_run: %v", err)
+	}
+
+	m, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("result type = %T", result)
+	}
+	if m["dry_run"] != true {
+		t.Error("expected dry_run=true")
+	}
+	if m["action"] != "drive_rename_file" {
+		t.Errorf("action = %v", m["action"])
+	}
+	if m["new_name"] != "new-name.txt" {
+		t.Errorf("new_name = %v", m["new_name"])
+	}
+	if m["file_name"] != "old-name.txt" {
+		t.Errorf("file_name = %v", m["file_name"])
+	}
+}
+
+func TestToolRenameFileNoFields(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+	hasWriteScope = true
+
+	_, err := toolRenameFile(mustJSON(t, map[string]any{
+		"file_id": "abc",
+	}), nil)
+	if err == nil {
+		t.Fatal("expected error when no name/parents fields provided")
+	}
+}
+
+func TestToolCopyFileDryRun(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+	hasWriteScope = true
+
+	result, err := toolCopyFile(mustJSON(t, map[string]any{
+		"file_id": "abc123",
+		"name":    "copy-of-doc.txt",
+		"dry_run": true,
+	}), nil)
+	if err != nil {
+		t.Fatalf("toolCopyFile dry_run: %v", err)
+	}
+
+	m, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("result type = %T", result)
+	}
+	if m["dry_run"] != true {
+		t.Error("expected dry_run=true")
+	}
+	if m["action"] != "drive_copy_file" {
+		t.Errorf("action = %v", m["action"])
+	}
+}
+
+func TestToolCopyFileMissingID(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+	hasWriteScope = true
+
+	_, err := toolCopyFile(mustJSON(t, map[string]any{}), nil)
+	if err == nil {
+		t.Fatal("expected error for missing file_id")
+	}
+}
+
+func TestToolDeleteFileDryRun(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+	hasWriteScope = true
+
+	setupDriveTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"del1","name":"old-file.txt","mimeType":"text/plain","size":"42"}`)
+	}))
+
+	result, err := toolDeleteFile(mustJSON(t, map[string]any{
+		"file_id": "del1",
+		"dry_run": true,
+	}), nil)
+	if err != nil {
+		t.Fatalf("toolDeleteFile dry_run: %v", err)
+	}
+
+	m, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("result type = %T", result)
+	}
+	if m["dry_run"] != true {
+		t.Error("expected dry_run=true")
+	}
+	if m["action"] != "drive_delete_file" {
+		t.Errorf("action = %v", m["action"])
+	}
+	if m["file_name"] != "old-file.txt" {
+		t.Errorf("file_name = %v", m["file_name"])
+	}
+}
+
+func TestToolDeleteFileMissingID(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+	hasWriteScope = true
+
+	_, err := toolDeleteFile(mustJSON(t, map[string]any{}), nil)
+	if err == nil {
+		t.Fatal("expected error for missing file_id")
+	}
+}
+
+func TestWriteToolsDefaultDryRunTrue(t *testing.T) {
+	orig := hasWriteScope
+	origProbed := writeScopeProbed
+	t.Cleanup(func() {
+		hasWriteScope = orig
+		writeScopeProbed = origProbed
+	})
+	writeScopeProbed = true
+	hasWriteScope = true
+
+	setupDriveTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"abc","name":"default.txt","mimeType":"text/plain","size":"10"}`)
+	}))
+
+	testFile := homeTempFile(t, "default-test.txt", []byte("x"))
+
+	// Upload: omit dry_run entirely — should default to true.
+	result, err := toolUploadFile(mustJSON(t, map[string]any{
+		"file_path": testFile,
+	}), nil)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if m, ok := result.(map[string]any); !ok || m["dry_run"] != true {
+		t.Error("upload should default to dry_run=true")
+	}
+
+	// Rename: omit dry_run.
+	result, err = toolRenameFile(mustJSON(t, map[string]any{
+		"file_id": "abc",
+		"name":    "new",
+	}), nil)
+	if err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	if m, ok := result.(map[string]any); !ok || m["dry_run"] != true {
+		t.Error("rename should default to dry_run=true")
+	}
+
+	// Copy: omit dry_run.
+	result, err = toolCopyFile(mustJSON(t, map[string]any{
+		"file_id": "abc",
+	}), nil)
+	if err != nil {
+		t.Fatalf("copy: %v", err)
+	}
+	if m, ok := result.(map[string]any); !ok || m["dry_run"] != true {
+		t.Error("copy should default to dry_run=true")
+	}
+
+	// Delete: omit dry_run.
+	result, err = toolDeleteFile(mustJSON(t, map[string]any{
+		"file_id": "abc",
+	}), nil)
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if m, ok := result.(map[string]any); !ok || m["dry_run"] != true {
+		t.Error("delete should default to dry_run=true")
+	}
+
+	// CreateFolder: omit dry_run.
+	result, err = toolCreateFolder(mustJSON(t, map[string]any{
+		"name": "test-folder",
+	}), nil)
+	if err != nil {
+		t.Fatalf("create folder: %v", err)
+	}
+	if m, ok := result.(map[string]any); !ok || m["dry_run"] != true {
+		t.Error("create folder should default to dry_run=true")
+	}
+}
+
+func TestConfineToHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{"under home", filepath.Join(home, "docs", "file.txt"), false},
+		{"home itself", home, false},
+		{"etc passwd", "/etc/passwd", true},
+		{"root", "/", true},
+		{"tmp", "/tmp/file.txt", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := confineToHome(tc.path)
+			if tc.wantErr && err == nil {
+				t.Errorf("expected error for %s", tc.path)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("unexpected error for %s: %v", tc.path, err)
+			}
+		})
+	}
+
+	t.Run("symlink escape rejected", func(t *testing.T) {
+		dir := filepath.Join(home, ".cache", "wtmcp-test")
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(dir, "escape-link")
+		if err := os.Symlink("/etc/passwd", link); err != nil {
+			t.Skipf("symlinks not supported: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Remove(link) })
+
+		if err := confineToHome(link); err == nil {
+			t.Error("expected error for symlink pointing outside home")
+		}
+	})
+}
